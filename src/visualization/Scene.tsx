@@ -4,6 +4,7 @@ import { OrbitControls } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { ParticleField } from './ParticleField';
 import { WhaleEffects } from './WhaleEffects';
+import { BlockPulse } from './BlockPulse';
 import { AmbientField } from './AmbientField';
 
 export function Scene() {
@@ -19,6 +20,7 @@ export function Scene() {
         <AmbientField />
         <ParticleField />
         <WhaleEffects />
+        <BlockPulse />
 
         <EffectComposer>
           <Bloom

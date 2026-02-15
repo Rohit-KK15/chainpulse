@@ -1,101 +1,115 @@
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { drainWhaleRipples } from './whaleEvents';
+import { Billboard } from '@react-three/drei';
+import { drainWhaleEvents } from './whaleEvents';
+import { WHALE_CONFIG } from '../config/whaleConfig';
+import { whaleGlowVertexShader, whaleGlowFragmentShader } from './shaders';
+import { particlePoolRef } from './ParticleField';
 
-const MAX_RIPPLES = 8;
-const RIPPLE_DURATION = 3;
-const RIPPLE_MAX_SCALE = 12;
+const MAX_AURAS = WHALE_CONFIG.maxSimultaneousWhales;
 
-interface RippleState {
+interface AuraState {
   active: boolean;
-  progress: number;
-  x: number;
-  y: number;
-  z: number;
+  poolIndex: number;
+  value: number;
   r: number;
   g: number;
   b: number;
 }
 
 export function WhaleEffects() {
-  const meshRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const ripples = useRef<RippleState[]>(
-    Array.from({ length: MAX_RIPPLES }, () => ({
+  const groupRefs = useRef<(THREE.Group | null)[]>([]);
+  const materials = useRef<(THREE.ShaderMaterial | null)[]>([]);
+  const auras = useRef<AuraState[]>(
+    Array.from({ length: MAX_AURAS }, () => ({
       active: false,
-      progress: 0,
-      x: 0, y: 0, z: 0,
+      poolIndex: -1,
+      value: 0,
       r: 1, g: 1, b: 1,
     })),
   );
 
-  useFrame((_, delta) => {
-    const newRipples = drainWhaleRipples();
-    for (const nr of newRipples) {
-      const slot = ripples.current.find((r) => !r.active);
+  const planeGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+
+  useFrame(() => {
+    const pool = particlePoolRef.current;
+
+    // Drain new whale events
+    const events = drainWhaleEvents();
+    for (const ev of events) {
+      const slot = auras.current.find((a) => !a.active);
       if (slot) {
         slot.active = true;
-        slot.progress = 0;
-        slot.x = nr.position[0];
-        slot.y = nr.position[1];
-        slot.z = nr.position[2];
-        slot.r = nr.color[0];
-        slot.g = nr.color[1];
-        slot.b = nr.color[2];
+        slot.poolIndex = ev.poolIndex;
+        slot.value = ev.value;
+        slot.r = ev.color[0];
+        slot.g = ev.color[1];
+        slot.b = ev.color[2];
       }
     }
 
-    ripples.current.forEach((r, i) => {
-      const mesh = meshRefs.current[i];
-      if (!mesh) return;
+    // Update aura positions and materials
+    auras.current.forEach((a, i) => {
+      const group = groupRefs.current[i];
+      const mat = materials.current[i];
+      if (!group || !mat) return;
 
-      if (!r.active) {
-        mesh.visible = false;
+      if (!a.active) {
+        group.visible = false;
         return;
       }
 
-      r.progress += delta / RIPPLE_DURATION;
-      if (r.progress >= 1) {
-        r.active = false;
-        mesh.visible = false;
+      // Check if the whale particle is still alive
+      if (!pool || a.poolIndex < 0 || !pool.particles[a.poolIndex].active ||
+          !pool.particles[a.poolIndex].isWhale) {
+        a.active = false;
+        group.visible = false;
         return;
       }
 
-      mesh.visible = true;
-      const scale = 1 + r.progress * RIPPLE_MAX_SCALE;
-      mesh.scale.set(scale, scale, scale);
-      mesh.position.set(r.x, r.y, r.z);
+      const p = pool.particles[a.poolIndex];
+      group.visible = true;
 
-      const mat = mesh.material as THREE.MeshBasicMaterial;
-      mat.color.setRGB(r.r, r.g, r.b);
-      mat.opacity = (1 - r.progress) * 0.5;
+      // Position follows whale particle
+      group.position.set(p.x, p.y, p.z);
+
+      // Scale based on config and whale value
+      const radius = WHALE_CONFIG.glowBaseRadius * (1 + a.value * 0.5);
+      group.scale.setScalar(radius);
+
+      // Update shader uniforms
+      mat.uniforms.uColor.value.set(a.r, a.g, a.b);
+      mat.uniforms.uIntensity.value = WHALE_CONFIG.glowMaxIntensity * p.whaleGlowIntensity;
     });
   });
 
   return (
     <>
-      {Array.from({ length: MAX_RIPPLES }, (_, i) => (
-        <mesh
+      {Array.from({ length: MAX_AURAS }, (_, i) => (
+        <group
           key={i}
-          ref={(el) => {
-            meshRefs.current[i] = el;
-          }}
+          ref={(el) => { groupRefs.current[i] = el; }}
           visible={false}
-          rotation={[
-            Math.random() * Math.PI,
-            Math.random() * Math.PI,
-            0,
-          ]}
         >
-          <ringGeometry args={[0.85, 1, 64]} />
-          <meshBasicMaterial
-            transparent
-            opacity={0}
-            side={THREE.DoubleSide}
-            blending={THREE.AdditiveBlending}
-            depthWrite={false}
-          />
-        </mesh>
+          <Billboard>
+            <mesh geometry={planeGeo}>
+              <shaderMaterial
+                ref={(el) => { materials.current[i] = el; }}
+                vertexShader={whaleGlowVertexShader}
+                fragmentShader={whaleGlowFragmentShader}
+                uniforms={{
+                  uColor: { value: new THREE.Color(1, 1, 1) },
+                  uIntensity: { value: 0 },
+                }}
+                transparent
+                depthWrite={false}
+                blending={THREE.AdditiveBlending}
+                side={THREE.DoubleSide}
+              />
+            </mesh>
+          </Billboard>
+        </group>
       ))}
     </>
   );

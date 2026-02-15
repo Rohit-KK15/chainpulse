@@ -1,14 +1,21 @@
-export interface WhaleRipple {
+export interface WhaleEvent {
   position: [number, number, number];
   color: [number, number, number];
+  poolIndex: number;
+  value: number;
 }
 
-const pending: WhaleRipple[] = [];
+const pending: WhaleEvent[] = [];
 
-export function queueWhaleRipple(ripple: WhaleRipple): void {
-  pending.push(ripple);
+export function queueWhaleEvent(event: WhaleEvent): void {
+  pending.push(event);
 }
 
-export function drainWhaleRipples(): WhaleRipple[] {
+export function drainWhaleEvents(): WhaleEvent[] {
   return pending.splice(0, pending.length);
 }
+
+// Keep backwards-compatible aliases
+export type WhaleRipple = WhaleEvent;
+export const queueWhaleRipple = queueWhaleEvent;
+export const drainWhaleRipples = drainWhaleEvents;

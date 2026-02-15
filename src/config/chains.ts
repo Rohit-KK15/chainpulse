@@ -15,8 +15,25 @@ export interface ChainConfig {
   center: [number, number, number];
 }
 
-export const CHAINS: Record<string, ChainConfig> = {
-  ethereum: {
+interface ChainDef {
+  id: string;
+  name: string;
+  chainId: number;
+  rpcWs: string;
+  rpcHttp: string;
+  nativeCurrency: string;
+  blockTime: number;
+  color: {
+    primary: string;
+    secondary: string;
+    accent: string;
+  };
+  whaleThreshold: number;
+}
+
+// Define chains without centers — positions are auto-calculated
+const CHAIN_DEFS: ChainDef[] = [
+  {
     id: 'ethereum',
     name: 'Ethereum',
     chainId: 1,
@@ -30,9 +47,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       accent: '#C0CCFF',
     },
     whaleThreshold: 5,
-    center: [0, 3.5, 0],
   },
-  polygon: {
+  {
     id: 'polygon',
     name: 'Polygon',
     chainId: 137,
@@ -46,9 +62,8 @@ export const CHAINS: Record<string, ChainConfig> = {
       accent: '#D4B8FF',
     },
     whaleThreshold: 25000,
-    center: [-5, -2.5, 0],
   },
-  arbitrum: {
+  {
     id: 'arbitrum',
     name: 'Arbitrum',
     chainId: 42161,
@@ -62,8 +77,33 @@ export const CHAINS: Record<string, ChainConfig> = {
       accent: '#96D4FF',
     },
     whaleThreshold: 5,
-    center: [5, -2.5, 0],
   },
-};
+];
+
+// Auto-position chains in a circle on the XY plane
+function computeCenters(defs: ChainDef[]): Record<string, ChainConfig> {
+  const n = defs.length;
+  const radius = n === 1 ? 0 : 4.2;
+  const result: Record<string, ChainConfig> = {};
+
+  for (let i = 0; i < n; i++) {
+    // Start from top (pi/2) and go clockwise
+    const angle = (Math.PI / 2) + (2 * Math.PI * i) / n;
+    const x = radius * Math.cos(angle);
+    const y = radius * Math.sin(angle);
+    result[defs[i].id] = {
+      ...defs[i],
+      center: [
+        Math.round(x * 10) / 10,
+        Math.round(y * 10) / 10,
+        0,
+      ],
+    };
+  }
+
+  return result;
+}
+
+export const CHAINS: Record<string, ChainConfig> = computeCenters(CHAIN_DEFS);
 
 export const DEFAULT_CHAIN = 'ethereum';

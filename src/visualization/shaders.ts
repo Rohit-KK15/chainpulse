@@ -83,6 +83,41 @@ export const whaleGlowFragmentShader = /* glsl */ `
   }
 `;
 
+export const blockPulseVertexShader = /* glsl */ `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const blockPulseFragmentShader = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uProgress;
+  uniform float uOpacity;
+
+  varying vec2 vUv;
+
+  void main() {
+    float dist = length(vUv - 0.5) * 2.0;
+
+    // Ring shape: bright at the expanding edge, transparent inside and outside
+    float ringWidth = 0.12;
+    float ringCenter = uProgress;
+    float ring = smoothstep(ringCenter - ringWidth, ringCenter, dist)
+               * (1.0 - smoothstep(ringCenter, ringCenter + ringWidth, dist));
+
+    // Soft inner glow
+    float innerGlow = exp(-dist * dist * 3.0) * (1.0 - uProgress) * 0.15;
+
+    float alpha = (ring * 0.6 + innerGlow) * uOpacity;
+    if (alpha < 0.001) discard;
+
+    gl_FragColor = vec4(uColor, alpha);
+  }
+`;
+
 export const ambientVertexShader = /* glsl */ `
   attribute float aSize;
 
@@ -90,11 +125,12 @@ export const ambientVertexShader = /* glsl */ `
 
   uniform float uTime;
   uniform float uPixelRatio;
+  uniform float uAmplitude;
 
   void main() {
     vec3 pos = position;
-    pos.x += sin(uTime * 0.1 + position.y * 0.5) * 0.15;
-    pos.y += cos(uTime * 0.08 + position.z * 0.5) * 0.15;
+    pos.x += sin(uTime * 0.1 + position.y * 0.5) * 0.15 * uAmplitude;
+    pos.y += cos(uTime * 0.08 + position.z * 0.5) * 0.15 * uAmplitude;
 
     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
 

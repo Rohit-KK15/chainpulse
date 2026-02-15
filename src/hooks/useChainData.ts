@@ -5,6 +5,9 @@ import { SimulationProvider } from '../data/SimulationProvider';
 import { mapTransaction } from '../processing/TransactionMapper';
 import { txQueue } from '../processing/TransactionQueue';
 import { CHAINS } from '../config/chains';
+import { activityMonitor } from '../processing/ActivityMonitor';
+import { queueBlockPulse } from '../visualization/blockPulseEvents';
+import { hexToRgb } from '../utils/color';
 import type { RawTransaction } from '../data/types';
 
 type Provider = ConnectionManager | SimulationProvider;
@@ -38,12 +41,28 @@ export function useChainData(): void {
           const processed = rawTxs.map(mapTransaction);
           txQueue.push(processed);
 
+          // Feed activity monitor for network stress dynamics
+          activityMonitor.record(chainId, processed.length);
+
           const s = useStore.getState();
           s.incrementTxCount(processed.length);
           s.addGasPrices(processed.map((tx) => tx.gasPrice));
 
           if (processed.length > 0) {
-            s.setLatestBlock(chainId, processed[0].blockNumber);
+            const prevBlock = s.latestBlocks[chainId];
+            const newBlock = processed[0].blockNumber;
+            if (newBlock !== prevBlock) {
+              s.setLatestBlock(chainId, newBlock);
+              // Emit block pulse wave
+              const chainConfig = CHAINS[chainId];
+              if (chainConfig) {
+                queueBlockPulse({
+                  chainId,
+                  center: chainConfig.center as [number, number, number],
+                  color: hexToRgb(chainConfig.color.primary),
+                });
+              }
+            }
           }
 
           for (const tx of processed) {

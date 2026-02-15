@@ -5,6 +5,7 @@ import { ambientVertexShader, ambientFragmentShader } from './shaders';
 import { useStore } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 import { hexToRgb } from '../utils/color';
+import { activityMonitor } from '../processing/ActivityMonitor';
 
 const STAR_COUNT = 1200;
 
@@ -60,6 +61,7 @@ export function AmbientField() {
         uPixelRatio: { value: gl.getPixelRatio() },
         uColor: { value: new THREE.Color(0.25, 0.25, 0.35) },
         uDim: { value: 1.0 },
+        uAmplitude: { value: 1.0 },
       },
       transparent: true,
       depthWrite: false,
@@ -97,6 +99,12 @@ export function AmbientField() {
     const targetDim = transitioning ? 0 : dimRef.current;
     const currentDim = material.uniforms.uDim.value as number;
     material.uniforms.uDim.value = currentDim + (targetDim - currentDim) * 0.08;
+
+    // Activity-driven motion amplitude: subtle turbulence increase at high activity
+    const activity = activityMonitor.getActivityLevel();
+    const targetAmplitude = 0.6 + Math.min(activity, 2.5) * 0.4;
+    const currentAmp = material.uniforms.uAmplitude.value as number;
+    material.uniforms.uAmplitude.value = currentAmp + (targetAmplitude - currentAmp) * 0.03;
   });
 
   return <points geometry={geometry} material={material} />;

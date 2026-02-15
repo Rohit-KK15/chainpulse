@@ -6,12 +6,23 @@ import { txQueue } from '../processing/TransactionQueue';
 import { queueWhaleEvent } from './whaleEvents';
 import { useStore } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
+import { getPersonality } from '../config/chainPersonalities';
+import { activityMonitor } from '../processing/ActivityMonitor';
+import { drainBlockPulses } from './blockPulseEvents';
 import { particleVertexShader, particleFragmentShader } from './shaders';
 
 const MAX_PARTICLES = 600;
 const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
 const DRAIN_PER_FRAME = 6;
 const SPAWN_RADIUS = 3.5;
+const PULSE_NUDGE_RADIUS = 6;
+const PULSE_NUDGE_STRENGTH = 0.3;
+const PULSE_NUDGE_DURATION = 1.2;
+
+interface ActivePulse {
+  cx: number; cy: number; cz: number;
+  age: number;
+}
 
 // Module-level ref so WhaleEffects can read pool data
 export const particlePoolRef: { current: ParticlePool | null } = { current: null };
@@ -19,6 +30,7 @@ export const particlePoolRef: { current: ParticlePool | null } = { current: null
 export function ParticleField() {
   const poolRef = useRef(new ParticlePool(MAX_PARTICLES));
   const indexMapRef = useRef<number[]>([]);
+  const activePulses = useRef<ActivePulse[]>([]);
   const { gl, camera } = useThree();
   const transitionOpacity = useRef(1);
 
@@ -161,19 +173,26 @@ export function ParticleField() {
     const batch = txQueue.drain(DRAIN_PER_FRAME);
     for (const tx of batch) {
       const chainCenter = CHAINS[tx.chainId]?.center ?? [0, 0, 0];
+      const personality = getPersonality(tx.chainId);
 
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
-      const r = 1 + Math.random() * SPAWN_RADIUS;
+      const r = (1 + Math.random() * SPAWN_RADIUS) * personality.spawnSpread;
 
       const x = chainCenter[0] + r * Math.sin(phi) * Math.cos(theta);
       const y = chainCenter[1] + r * Math.sin(phi) * Math.sin(theta);
       const z = chainCenter[2] + r * Math.cos(phi);
 
-      const speed = tx.isWhale ? 0.1 : 0.2;
-      const vx = (Math.random() - 0.5) * speed;
-      const vy = (Math.random() - 0.5) * speed;
-      const vz = (Math.random() - 0.5) * speed;
+      const baseSpeed = tx.isWhale ? 0.1 : 0.2;
+      // Activity dynamics: high activity boosts speed up to 30%, low activity calms it
+      const activity = activityMonitor.getActivityLevel(tx.chainId);
+      const activityBoost = 0.7 + Math.min(activity, 2) * 0.3;
+      const speed = baseSpeed * personality.speedMultiplier * activityBoost;
+      // Smoothness reduces jitter: lerp velocity toward 0 by motionSmoothness
+      const jitter = 1 - personality.motionSmoothness * 0.5;
+      const vx = (Math.random() - 0.5) * speed * jitter;
+      const vy = (Math.random() - 0.5) * speed * jitter;
+      const vz = (Math.random() - 0.5) * speed * jitter;
 
       const baseSize = tx.isWhale
         ? 2.0 + tx.visual.size * 3.0
@@ -187,13 +206,15 @@ export function ParticleField() {
 
       const poolIndex = pool.spawn({
         x, y, z, vx, vy, vz,
-        size: baseSize,
+        size: baseSize * personality.glowIntensity,
         r: tx.visual.color[0],
         g: tx.visual.color[1],
         b: tx.visual.color[2],
         maxAge,
         isWhale: tx.isWhale,
         chainId: tx.chainId,
+        dampingMult: personality.dampingMultiplier,
+        energyHalfLifeMult: personality.energyHalfLifeMult,
         hash: tx.hash,
         from: tx.from,
         to: tx.to,
@@ -202,6 +223,12 @@ export function ParticleField() {
         gasPrice: tx.gasPrice,
         timestamp: tx.timestamp,
       });
+
+      // Value spectrum: modulate initial energy by transaction intensity
+      if (poolIndex >= 0) {
+        const p = pool.particles[poolIndex];
+        p.energy = tx.isWhale ? 1.5 : (0.6 + tx.visual.intensity * 0.4);
+      }
 
       if (tx.isWhale) {
         queueWhaleEvent({
@@ -214,6 +241,59 @@ export function ParticleField() {
     }
 
     pool.update(delta);
+
+    // ── Block pulse particle nudge ──────────────
+    for (const ev of drainBlockPulses('particleNudge')) {
+      activePulses.current.push({
+        cx: ev.center[0], cy: ev.center[1], cz: ev.center[2],
+        age: 0,
+      });
+    }
+
+    // Update and apply active pulse nudges
+    const pulsesToRemove: number[] = [];
+    for (let pi = 0; pi < activePulses.current.length; pi++) {
+      const pulse = activePulses.current[pi];
+      pulse.age += delta;
+      if (pulse.age >= PULSE_NUDGE_DURATION) {
+        pulsesToRemove.push(pi);
+        continue;
+      }
+
+      const pulseStrength = PULSE_NUDGE_STRENGTH * Math.pow(1 - pulse.age / PULSE_NUDGE_DURATION, 2);
+      const pulseRadius = PULSE_NUDGE_RADIUS * (pulse.age / PULSE_NUDGE_DURATION);
+      const radiusSq = PULSE_NUDGE_RADIUS * PULSE_NUDGE_RADIUS;
+
+      for (let i = 0; i < pool.capacity; i++) {
+        const p = pool.particles[i];
+        if (!p.active) continue;
+
+        const dx = p.x - pulse.cx;
+        const dy = p.y - pulse.cy;
+        const dz = p.z - pulse.cz;
+        const distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq > radiusSq || distSq < 0.01) continue;
+
+        const dist = Math.sqrt(distSq);
+        // Particles near the expanding wavefront get the most nudge
+        const waveDist = Math.abs(dist - pulseRadius);
+        const waveInfluence = Math.exp(-waveDist * waveDist * 2);
+
+        const force = pulseStrength * waveInfluence * delta;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const nz = dz / dist;
+
+        p.vx += nx * force;
+        p.vy += ny * force;
+        p.vz += nz * force;
+      }
+    }
+    // Remove expired pulses (iterate backwards)
+    for (let i = pulsesToRemove.length - 1; i >= 0; i--) {
+      activePulses.current.splice(pulsesToRemove[i], 1);
+    }
 
     // Write main particle buffers
     const positions = mainGeo.attributes.position.array as Float32Array;

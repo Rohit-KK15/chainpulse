@@ -31,6 +31,9 @@ export interface ParticleData {
   // Classification
   isWhale: boolean;
   chainId: string;
+  // Chain personality modifiers (set at spawn)
+  dampingMult: number;
+  energyHalfLifeMult: number;
   // Whale-specific fields
   whaleGlowIntensity: number;
   whaleValue: number;
@@ -64,6 +67,8 @@ export interface SpawnConfig {
   maxAge: number;
   isWhale: boolean;
   chainId: string;
+  dampingMult: number;
+  energyHalfLifeMult: number;
   hash: string;
   from: string;
   to: string | null;
@@ -76,7 +81,7 @@ export interface SpawnConfig {
 export class ParticlePool {
   particles: ParticleData[];
   activeCount = 0;
-  private capacity: number;
+  readonly capacity: number;
 
   constructor(capacity: number) {
     this.capacity = capacity;
@@ -98,6 +103,8 @@ export class ParticlePool {
       age: 0, maxAge: 1,
       isWhale: false,
       chainId: '',
+      dampingMult: 1,
+      energyHalfLifeMult: 1,
       whaleGlowIntensity: 0,
       whaleValue: 0,
       trailX: new Array(TRAIL_LENGTH).fill(0),
@@ -148,6 +155,8 @@ export class ParticlePool {
     p.maxAge = config.maxAge;
     p.isWhale = config.isWhale;
     p.chainId = config.chainId;
+    p.dampingMult = config.dampingMult;
+    p.energyHalfLifeMult = config.energyHalfLifeMult;
     p.whaleGlowIntensity = 0;
     p.whaleValue = config.whaleValue;
     p.hash = config.hash;
@@ -175,13 +184,9 @@ export class ParticlePool {
     // Collect active whale particles for attraction pass
     const whales: ParticleData[] = [];
 
-    // Precompute frame-rate-independent damping factor
-    // v_new = v * dampingRate^dt  (so at 60fps and 30fps the result over 1s is identical)
-    const velDamp = Math.pow(LIFECYCLE.velocityDampingRate, dt);
-
-    // Precompute exponential decay multipliers for this frame
-    // value *= 2^(-dt / halfLife)  =  exp(-dt * ln2 / halfLife)
-    const energyDecay = Math.exp(-dt * LN2 / LIFECYCLE.energyHalfLife);
+    // Base damping/decay values — per-particle multipliers applied in the loop
+    const baseDampLog = Math.log(LIFECYCLE.velocityDampingRate);
+    const baseEnergyRate = LN2 / LIFECYCLE.energyHalfLife;
     const opacityDecay = Math.exp(-dt * LN2 / LIFECYCLE.opacityHalfLife);
 
     for (let i = 0; i < this.capacity; i++) {
@@ -214,7 +219,8 @@ export class ParticlePool {
       p.y += p.vy * dt;
       p.z += p.vz * dt;
 
-      // ── Frame-rate-independent velocity damping ──
+      // ── Frame-rate-independent velocity damping (per-particle personality) ──
+      const velDamp = Math.exp(baseDampLog * p.dampingMult * dt);
       p.vx *= velDamp;
       p.vy *= velDamp;
       p.vz *= velDamp;
@@ -223,6 +229,9 @@ export class ParticlePool {
       // Cubic ease-out ramp: fast rise, gentle settle
       const spawnT = Math.min(p.age / LIFECYCLE.spawnDuration, 1);
       const spawnEnv = 1 - Math.pow(1 - spawnT, LIFECYCLE.spawnEaseExponent);
+
+      // Per-particle energy decay using personality multiplier
+      const energyDecay = Math.exp(-dt * baseEnergyRate / p.energyHalfLifeMult);
 
       if (p.isWhale) {
         // ── Whale lifecycle ─────────────────────
@@ -390,9 +399,16 @@ export class ParticlePool {
 
       const whaleFlag = p.isWhale ? 1 : 0;
 
+      // Velocity-scaled trail: faster particles get more visible trails
+      const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy + p.vz * p.vz);
+      const speedFactor = Math.min(speed / 0.3, 1); // normalize: 0.3 units/s = full trail
+      const trailVisibility = 0.3 + speedFactor * 0.7; // 30-100% visibility based on speed
+
       for (let t = 0; t < p.trailFill; t++) {
         const bufIdx = (p.trailHead - p.trailFill + t + TRAIL_LENGTH) % TRAIL_LENGTH;
-        const freshness = (t + 1) / p.trailFill;
+        const linearFresh = (t + 1) / p.trailFill;
+        // Cubic freshness curve: trails fade more gracefully near the tail
+        const freshness = linearFresh * linearFresh * (3 - 2 * linearFresh);
 
         const j = idx * 3;
         positions[j] = p.trailX[bufIdx];
@@ -401,9 +417,9 @@ export class ParticlePool {
         colors[j] = p.r;
         colors[j + 1] = p.g;
         colors[j + 2] = p.b;
-        sizes[idx] = p.size * freshness * 0.4;
-        // Trail opacity couples with parent energy for coherent dimming
-        opacities[idx] = p.opacity * freshness * 0.35;
+        sizes[idx] = p.size * freshness * 0.45 * trailVisibility;
+        // Trail opacity couples with parent energy and velocity for coherent dimming
+        opacities[idx] = p.opacity * freshness * 0.4 * trailVisibility;
         isWhaleArr[idx] = whaleFlag;
         idx++;
       }

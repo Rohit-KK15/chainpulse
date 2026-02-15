@@ -20,56 +20,63 @@ export function useChainData(): void {
     const store = useStore.getState();
     store.resetTxCount();
     store.clearWhales();
+    store.setTransitioning(true);
+
+    // Brief delay so the fade-out is visible before spawning new particles
+    const startTimer = setTimeout(() => {
+      store.setTransitioning(false);
+      setupProviders();
+    }, 400);
 
     const chainIds = Object.keys(CHAINS);
 
-    for (const chainId of chainIds) {
-      store.setChainConnected(chainId, false);
+    function setupProviders() {
+      for (const chainId of chainIds) {
+        store.setChainConnected(chainId, false);
 
-      const handleRawTransactions = (rawTxs: RawTransaction[]) => {
-        const processed = rawTxs.map(mapTransaction);
-        txQueue.push(processed);
+        const handleRawTransactions = (rawTxs: RawTransaction[]) => {
+          const processed = rawTxs.map(mapTransaction);
+          txQueue.push(processed);
 
-        const s = useStore.getState();
-        s.incrementTxCount(processed.length);
-        s.addGasPrices(processed.map((tx) => tx.gasPrice));
+          const s = useStore.getState();
+          s.incrementTxCount(processed.length);
+          s.addGasPrices(processed.map((tx) => tx.gasPrice));
 
-        if (processed.length > 0) {
-          s.setLatestBlock(chainId, processed[0].blockNumber);
-        }
-
-        for (const tx of processed) {
-          if (tx.isWhale) {
-            useStore.getState().addWhale(tx);
+          if (processed.length > 0) {
+            s.setLatestBlock(chainId, processed[0].blockNumber);
           }
-        }
-      };
 
-      if (isSimulation) {
-        const sim = new SimulationProvider(chainId, handleRawTransactions);
-        sim.start();
-        providersRef.current.push(sim);
-        useStore.getState().setChainConnected(chainId, true);
-      } else {
-        const conn = new ConnectionManager(chainId, handleRawTransactions);
-        conn.setStatusCallback((status) => {
-          if (status === 'connected') {
-            useStore.getState().setChainConnected(chainId, true);
-          } else {
-            // Fallback this chain to simulation
-            const sim = new SimulationProvider(chainId, handleRawTransactions);
-            sim.start();
-            providersRef.current.push(sim);
-            useStore.getState().setChainConnected(chainId, true);
+          for (const tx of processed) {
+            if (tx.isWhale) {
+              useStore.getState().addWhale(tx);
+            }
           }
-        });
-        providersRef.current.push(conn);
-        conn.connect().catch(() => {
+        };
+
+        if (isSimulation) {
           const sim = new SimulationProvider(chainId, handleRawTransactions);
           sim.start();
           providersRef.current.push(sim);
           useStore.getState().setChainConnected(chainId, true);
-        });
+        } else {
+          const conn = new ConnectionManager(chainId, handleRawTransactions);
+          conn.setStatusCallback((status) => {
+            if (status === 'connected') {
+              useStore.getState().setChainConnected(chainId, true);
+            } else {
+              useStore.getState().setChainConnected(chainId, false);
+            }
+          });
+          providersRef.current.push(conn);
+          conn.connect().catch(() => {
+            // ConnectionManager now handles reconnection internally;
+            // after max retries, fall back to simulation
+            const sim = new SimulationProvider(chainId, handleRawTransactions);
+            sim.start();
+            providersRef.current.push(sim);
+            useStore.getState().setChainConnected(chainId, true);
+          });
+        }
       }
     }
 
@@ -84,6 +91,9 @@ export function useChainData(): void {
       providersRef.current = [];
     }
 
-    return cleanupAll;
+    return () => {
+      clearTimeout(startTimer);
+      cleanupAll();
+    };
   }, [isSimulation]);
 }

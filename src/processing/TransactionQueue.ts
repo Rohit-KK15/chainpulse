@@ -2,11 +2,21 @@ import type { ProcessedTransaction } from '../data/types';
 
 class TransactionQueue {
   private queue: ProcessedTransaction[] = [];
+  private static MAX_SIZE = 300;
+  private static TRIM_TARGET = 150;
 
   push(txs: ProcessedTransaction[]): void {
     this.queue.push(...txs);
-    if (this.queue.length > 300) {
-      this.queue = this.queue.slice(-150);
+    if (this.queue.length > TransactionQueue.MAX_SIZE) {
+      // Partition into whales and non-whales, only trim non-whales
+      const whales: ProcessedTransaction[] = [];
+      const normal: ProcessedTransaction[] = [];
+      for (const tx of this.queue) {
+        if (tx.isWhale) whales.push(tx);
+        else normal.push(tx);
+      }
+      const normalKeep = Math.max(TransactionQueue.TRIM_TARGET - whales.length, 0);
+      this.queue = [...whales, ...normal.slice(-normalKeep)];
     }
   }
 

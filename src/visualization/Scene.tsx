@@ -23,7 +23,7 @@ export function Scene() {
         <EffectComposer>
           <Bloom
             intensity={1.5}
-            luminanceThreshold={0.15}
+            luminanceThreshold={0.12}
             luminanceSmoothing={0.9}
             mipmapBlur
           />

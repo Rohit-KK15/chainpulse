@@ -108,11 +108,39 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   );
 }
 
+// ── Connection Toast ──────────────────────────
+
+function ConnectionToast() {
+  const chainConnected = useStore((s) => s.chainConnected);
+  const isSimulation = useStore((s) => s.isSimulation);
+
+  if (isSimulation) return null;
+
+  const chains = Object.values(CHAINS);
+  const disconnected = chains.filter((c) => chainConnected[c.id] === false);
+
+  if (disconnected.length === 0) return null;
+
+  return (
+    <div className="connection-toast">
+      {disconnected.map((chain) => (
+        <div key={chain.id} className="toast-item">
+          <span
+            className="toast-dot"
+            style={{ background: chain.color.primary }}
+          />
+          <span>Connecting to {chain.name}...</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Stats Strip ────────────────────────────────
 
 function StatsStrip() {
   const txCount = useStore((s) => s.txCount);
-  const gasPrices = useStore((s) => s.gasPrices);
+  const avgGas = useStore((s) => s.avgGas);
   const recentWhales = useStore((s) => s.recentWhales);
   const latestBlocks = useStore((s) => s.latestBlocks);
   const chainConnected = useStore((s) => s.chainConnected);
@@ -128,11 +156,6 @@ function StatsStrip() {
     }, 1000);
     return () => clearInterval(id);
   }, []);
-
-  const avgGas =
-    gasPrices.length > 0
-      ? gasPrices.reduce((a, b) => a + b, 0) / gasPrices.length
-      : 0;
 
   return (
     <div className="stats-strip">
@@ -181,6 +204,7 @@ export function Overlay() {
   const txCount = useStore((s) => s.txCount);
   const recentWhales = useStore((s) => s.recentWhales);
   const inspectedTx = useStore((s) => s.inspectedTx);
+  const transitioning = useStore((s) => s.transitioning);
 
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
 
@@ -190,6 +214,12 @@ export function Overlay() {
 
   return (
     <div className="overlay">
+      {/* Transition overlay */}
+      {transitioning && <div className="transition-overlay" />}
+
+      {/* Connection toast */}
+      <ConnectionToast />
+
       {/* Header */}
       <div className="overlay-header">
         <div className="logo">
@@ -245,12 +275,11 @@ export function Overlay() {
         </div>
 
         <div className="whale-alerts">
-          {recentWhales.map((whale, i) => (
+          {recentWhales.map((whale) => (
             <div
               key={whale.hash}
               className="whale-alert"
               style={{
-                opacity: 1 - i * 0.18,
                 '--chain-color': CHAINS[whale.chainId]?.color.primary ?? '#fff',
               } as React.CSSProperties}
             >

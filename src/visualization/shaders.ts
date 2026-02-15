@@ -1,9 +1,13 @@
 export const particleVertexShader = /* glsl */ `
   attribute float aSize;
   attribute float aOpacity;
+  attribute float aEnergy;
+  attribute float aIsWhale;
 
   varying vec3 vColor;
   varying float vOpacity;
+  varying float vEnergy;
+  varying float vIsWhale;
 
   uniform float uPixelRatio;
   uniform float uTime;
@@ -11,6 +15,8 @@ export const particleVertexShader = /* glsl */ `
   void main() {
     vColor = color;
     vOpacity = aOpacity;
+    vEnergy = aEnergy;
+    vIsWhale = aIsWhale;
 
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
 
@@ -24,6 +30,8 @@ export const particleVertexShader = /* glsl */ `
 export const particleFragmentShader = /* glsl */ `
   varying vec3 vColor;
   varying float vOpacity;
+  varying float vEnergy;
+  varying float vIsWhale;
 
   void main() {
     vec2 center = gl_PointCoord - 0.5;
@@ -31,13 +39,47 @@ export const particleFragmentShader = /* glsl */ `
 
     if (dist > 1.0) discard;
 
+    // Smooth radial falloff with energy-dependent sharpness
+    // High energy → sharper, more defined core; low energy → softer, diffused
+    float sharpness = 1.2 + vEnergy * 0.5;
     float alpha = 1.0 - smoothstep(0.0, 1.0, dist);
-    alpha = pow(alpha, 1.5);
+    alpha = pow(alpha, sharpness);
 
-    float core = exp(-dist * 3.0);
-    vec3 finalColor = vColor * (1.0 + core * 2.0);
+    // Core glow: bright center that dims with energy
+    float core = exp(-dist * (2.5 + (1.0 - vEnergy) * 2.0));
+    // Energy drives the core brightness multiplier
+    float coreMult = 2.0 + vEnergy * 1.5 + vIsWhale * 3.0;
+    vec3 finalColor = vColor * (1.0 + core * coreMult);
+
+    // Subtle outer halo for whale particles
+    float halo = exp(-dist * dist * 1.5) * vIsWhale * 0.3;
+    alpha = alpha + halo;
 
     gl_FragColor = vec4(finalColor, alpha * vOpacity);
+  }
+`;
+
+export const whaleGlowVertexShader = /* glsl */ `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const whaleGlowFragmentShader = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uIntensity;
+
+  varying vec2 vUv;
+
+  void main() {
+    float dist = length(vUv - 0.5) * 2.0;
+    float glow = exp(-dist * dist * 2.5);
+    float edge = 1.0 - smoothstep(0.7, 1.0, dist);
+    float alpha = glow * edge * uIntensity;
+    gl_FragColor = vec4(uColor, alpha);
   }
 `;
 
@@ -68,6 +110,7 @@ export const ambientVertexShader = /* glsl */ `
 export const ambientFragmentShader = /* glsl */ `
   varying float vAlpha;
   uniform vec3 uColor;
+  uniform float uDim;
 
   void main() {
     vec2 center = gl_PointCoord - 0.5;
@@ -75,7 +118,7 @@ export const ambientFragmentShader = /* glsl */ `
     if (dist > 1.0) discard;
 
     float alpha = 1.0 - smoothstep(0.0, 1.0, dist);
-    alpha *= vAlpha * 0.35;
+    alpha *= vAlpha * 0.35 * uDim;
 
     gl_FragColor = vec4(uColor, alpha);
   }

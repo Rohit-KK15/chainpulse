@@ -3,7 +3,7 @@ import { useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ParticlePool, TRAIL_LENGTH } from './ParticlePool';
 import { txQueue } from '../processing/TransactionQueue';
-import { queueWhaleRipple } from './whaleEvents';
+import { queueWhaleEvent } from './whaleEvents';
 import { useStore } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 import { particleVertexShader, particleFragmentShader } from './shaders';
@@ -13,10 +13,19 @@ const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
 const DRAIN_PER_FRAME = 6;
 const SPAWN_RADIUS = 3.5;
 
+// Module-level ref so WhaleEffects can read pool data
+export const particlePoolRef: { current: ParticlePool | null } = { current: null };
+
 export function ParticleField() {
   const poolRef = useRef(new ParticlePool(MAX_PARTICLES));
   const indexMapRef = useRef<number[]>([]);
   const { gl, camera } = useThree();
+  const transitionOpacity = useRef(1);
+
+  // Expose pool ref at module level
+  if (!particlePoolRef.current) {
+    particlePoolRef.current = poolRef.current;
+  }
 
   // Main particle geometry + material
   const { mainGeo, mainMat } = useMemo(() => {
@@ -25,6 +34,8 @@ export function ParticleField() {
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES * 3), 3));
     geo.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES), 1));
     geo.setAttribute('aOpacity', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES), 1));
+    geo.setAttribute('aEnergy', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES), 1));
+    geo.setAttribute('aIsWhale', new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES), 1));
     geo.setDrawRange(0, 0);
 
     const mat = new THREE.ShaderMaterial({
@@ -50,6 +61,8 @@ export function ParticleField() {
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL_POINTS * 3), 3));
     geo.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL_POINTS), 1));
     geo.setAttribute('aOpacity', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL_POINTS), 1));
+    geo.setAttribute('aEnergy', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL_POINTS), 1));
+    geo.setAttribute('aIsWhale', new THREE.BufferAttribute(new Float32Array(MAX_TRAIL_POINTS), 1));
     geo.setDrawRange(0, 0);
 
     const mat = new THREE.ShaderMaterial({
@@ -68,9 +81,9 @@ export function ParticleField() {
     return { trailGeo: geo, trailMat: mat };
   }, [gl]);
 
-  // Click handler for particle inspection
-  const handleClick = useCallback(
-    (event: ThreeEvent<MouseEvent>) => {
+  // Click/pointer handler for particle inspection (#8 + #14)
+  const handlePointerDown = useCallback(
+    (event: ThreeEvent<PointerEvent>) => {
       const pool = poolRef.current;
       const map = indexMapRef.current;
 
@@ -87,8 +100,8 @@ export function ParticleField() {
             gasPrice: p.gasPrice,
             chainId: p.chainId,
             timestamp: p.timestamp,
-            screenX: event.clientX,
-            screenY: event.clientY,
+            screenX: event.clientX ?? event.nativeEvent.clientX,
+            screenY: event.clientY ?? event.nativeEvent.clientY,
           });
           event.stopPropagation();
           return;
@@ -96,9 +109,12 @@ export function ParticleField() {
       }
 
       // Fallback: manual proximity check against camera ray
+      // Scale threshold by camera distance for consistent hit area
       const ray = event.ray;
+      const camDist = camera.position.length();
+      const hitThreshold = 0.5 + camDist * 0.04;
       const tmpVec = new THREE.Vector3();
-      let closestDist = 1.5;
+      let closestDist = hitThreshold;
       let closestIdx = -1;
 
       for (let i = 0; i < map.length; i++) {
@@ -122,19 +138,24 @@ export function ParticleField() {
           gasPrice: p.gasPrice,
           chainId: p.chainId,
           timestamp: p.timestamp,
-          screenX: event.clientX,
-          screenY: event.clientY,
+          screenX: event.clientX ?? event.nativeEvent.clientX,
+          screenY: event.clientY ?? event.nativeEvent.clientY,
         });
       } else {
         useStore.getState().setInspectedTx(null);
       }
     },
-    [],
+    [camera],
   );
 
   useFrame((state, delta) => {
     const pool = poolRef.current;
     const focusedChain = useStore.getState().focusedChain;
+    const isTransitioning = useStore.getState().transitioning;
+
+    // Smooth transition opacity (#7)
+    const targetOpacity = isTransitioning ? 0 : 1;
+    transitionOpacity.current += (targetOpacity - transitionOpacity.current) * Math.min(delta * 5, 1);
 
     // Drain queued transactions and spawn particles at chain cluster positions
     const batch = txQueue.drain(DRAIN_PER_FRAME);
@@ -161,7 +182,10 @@ export function ParticleField() {
         ? 8 + Math.random() * 4
         : 3 + Math.random() * 3;
 
-      pool.spawn({
+      // Normalize whale value for scaling effects (0-1 range)
+      const whaleValue = tx.isWhale ? Math.min(tx.visual.size, 1) : 0;
+
+      const poolIndex = pool.spawn({
         x, y, z, vx, vy, vz,
         size: baseSize,
         r: tx.visual.color[0],
@@ -174,14 +198,17 @@ export function ParticleField() {
         from: tx.from,
         to: tx.to,
         value: tx.value,
+        whaleValue,
         gasPrice: tx.gasPrice,
         timestamp: tx.timestamp,
       });
 
       if (tx.isWhale) {
-        queueWhaleRipple({
+        queueWhaleEvent({
           position: [x, y, z],
           color: tx.visual.color,
+          poolIndex,
+          value: whaleValue,
         });
       }
     }
@@ -193,18 +220,22 @@ export function ParticleField() {
     const colors = mainGeo.attributes.color.array as Float32Array;
     const sizes = mainGeo.attributes.aSize.array as Float32Array;
     const opacities = mainGeo.attributes.aOpacity.array as Float32Array;
+    const energies = mainGeo.attributes.aEnergy.array as Float32Array;
+    const isWhaleArr = mainGeo.attributes.aIsWhale.array as Float32Array;
 
-    const count = pool.writeBuffers(positions, colors, sizes, opacities, indexMapRef.current);
+    const count = pool.writeBuffers(positions, colors, sizes, opacities, energies, isWhaleArr, indexMapRef.current);
 
-    // Apply focus dimming
-    if (focusedChain) {
+    // Apply focus dimming and transition opacity
+    const tOp = transitionOpacity.current;
+    if (focusedChain || tOp < 0.99) {
       const map = indexMapRef.current;
       for (let i = 0; i < count; i++) {
         const p = pool.particles[map[i]];
-        if (p.chainId !== focusedChain) {
+        if (focusedChain && p.chainId !== focusedChain) {
           opacities[i] *= 0.15;
           sizes[i] *= 0.6;
         }
+        opacities[i] *= tOp;
       }
     }
 
@@ -212,6 +243,8 @@ export function ParticleField() {
     mainGeo.attributes.color.needsUpdate = true;
     (mainGeo.attributes.aSize as THREE.BufferAttribute).needsUpdate = true;
     (mainGeo.attributes.aOpacity as THREE.BufferAttribute).needsUpdate = true;
+    (mainGeo.attributes.aEnergy as THREE.BufferAttribute).needsUpdate = true;
+    (mainGeo.attributes.aIsWhale as THREE.BufferAttribute).needsUpdate = true;
     mainGeo.setDrawRange(0, count);
 
     // Write trail buffers
@@ -219,13 +252,23 @@ export function ParticleField() {
     const tCol = trailGeo.attributes.color.array as Float32Array;
     const tSiz = trailGeo.attributes.aSize.array as Float32Array;
     const tOpa = trailGeo.attributes.aOpacity.array as Float32Array;
+    const tIsWhale = trailGeo.attributes.aIsWhale.array as Float32Array;
 
-    const trailCount = pool.writeTrailBuffers(tPos, tCol, tSiz, tOpa);
+    const trailCount = pool.writeTrailBuffers(tPos, tCol, tSiz, tOpa, tIsWhale);
+
+    // Apply transition opacity to trails
+    if (tOp < 0.99) {
+      for (let i = 0; i < trailCount; i++) {
+        tOpa[i] *= tOp;
+      }
+    }
 
     trailGeo.attributes.position.needsUpdate = true;
     trailGeo.attributes.color.needsUpdate = true;
     (trailGeo.attributes.aSize as THREE.BufferAttribute).needsUpdate = true;
     (trailGeo.attributes.aOpacity as THREE.BufferAttribute).needsUpdate = true;
+    (trailGeo.attributes.aEnergy as THREE.BufferAttribute).needsUpdate = true;
+    (trailGeo.attributes.aIsWhale as THREE.BufferAttribute).needsUpdate = true;
     trailGeo.setDrawRange(0, trailCount);
 
     // Uniforms
@@ -240,7 +283,7 @@ export function ParticleField() {
       <points
         geometry={mainGeo}
         material={mainMat}
-        onClick={handleClick}
+        onPointerDown={handlePointerDown}
       />
     </>
   );

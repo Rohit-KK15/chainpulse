@@ -1,23 +1,39 @@
+import { WHALE_CONFIG } from '../config/whaleConfig';
+import { LIFECYCLE } from '../config/lifecycleConfig';
+
 export const TRAIL_LENGTH = 8;
+
+// Precomputed constant for exponential decay: ln(2)
+const LN2 = Math.LN2;
 
 export interface ParticleData {
   active: boolean;
+  // Position
   x: number;
   y: number;
   z: number;
+  // Velocity
   vx: number;
   vy: number;
   vz: number;
+  // Visual state (computed each frame from lifecycle)
   size: number;
   targetSize: number;
+  opacity: number;
+  energy: number;
+  // Color
   r: number;
   g: number;
   b: number;
-  opacity: number;
+  // Lifecycle timing
   age: number;
   maxAge: number;
+  // Classification
   isWhale: boolean;
   chainId: string;
+  // Whale-specific fields
+  whaleGlowIntensity: number;
+  whaleValue: number;
   // Trail ring buffer
   trailX: number[];
   trailY: number[];
@@ -52,11 +68,10 @@ export interface SpawnConfig {
   from: string;
   to: string | null;
   value: number;
+  whaleValue: number;
   gasPrice: number;
   timestamp: number;
 }
-
-const TRAIL_SAMPLE_INTERVAL = 0.06;
 
 export class ParticlePool {
   particles: ParticleData[];
@@ -77,11 +92,14 @@ export class ParticlePool {
       x: 0, y: 0, z: 0,
       vx: 0, vy: 0, vz: 0,
       size: 0, targetSize: 0,
-      r: 1, g: 1, b: 1,
       opacity: 0,
+      energy: 0,
+      r: 1, g: 1, b: 1,
       age: 0, maxAge: 1,
       isWhale: false,
       chainId: '',
+      whaleGlowIntensity: 0,
+      whaleValue: 0,
       trailX: new Array(TRAIL_LENGTH).fill(0),
       trailY: new Array(TRAIL_LENGTH).fill(0),
       trailZ: new Array(TRAIL_LENGTH).fill(0),
@@ -93,7 +111,7 @@ export class ParticlePool {
     };
   }
 
-  spawn(config: SpawnConfig): void {
+  spawn(config: SpawnConfig): number {
     let idx = -1;
 
     for (let i = 0; i < this.capacity; i++) {
@@ -125,10 +143,13 @@ export class ParticlePool {
     p.size = 0;
     p.r = config.r; p.g = config.g; p.b = config.b;
     p.opacity = 0;
+    p.energy = LIFECYCLE.initialEnergy;
     p.age = 0;
     p.maxAge = config.maxAge;
     p.isWhale = config.isWhale;
     p.chainId = config.chainId;
+    p.whaleGlowIntensity = 0;
+    p.whaleValue = config.whaleValue;
     p.hash = config.hash;
     p.from = config.from;
     p.to = config.to;
@@ -136,7 +157,6 @@ export class ParticlePool {
     p.gasPrice = config.gasPrice;
     p.timestamp = config.timestamp;
 
-    // Initialize trail to spawn position
     for (let t = 0; t < TRAIL_LENGTH; t++) {
       p.trailX[t] = config.x;
       p.trailY[t] = config.y;
@@ -145,24 +165,42 @@ export class ParticlePool {
     p.trailHead = 0;
     p.trailFill = 0;
     p.trailTimer = 0;
+
+    return idx;
   }
 
   update(dt: number): void {
     this.activeCount = 0;
 
+    // Collect active whale particles for attraction pass
+    const whales: ParticleData[] = [];
+
+    // Precompute frame-rate-independent damping factor
+    // v_new = v * dampingRate^dt  (so at 60fps and 30fps the result over 1s is identical)
+    const velDamp = Math.pow(LIFECYCLE.velocityDampingRate, dt);
+
+    // Precompute exponential decay multipliers for this frame
+    // value *= 2^(-dt / halfLife)  =  exp(-dt * ln2 / halfLife)
+    const energyDecay = Math.exp(-dt * LN2 / LIFECYCLE.energyHalfLife);
+    const opacityDecay = Math.exp(-dt * LN2 / LIFECYCLE.opacityHalfLife);
+
     for (let i = 0; i < this.capacity; i++) {
       const p = this.particles[i];
       if (!p.active) continue;
 
+      // ── Advance age ───────────────────────────
       p.age += dt;
+      const life = p.age / p.maxAge;
+
+      // ── Primary death: lifetime exceeded ──────
       if (p.age >= p.maxAge) {
         p.active = false;
         continue;
       }
 
-      // Sample trail before moving
+      // ── Trail sampling (before position update) ──
       p.trailTimer += dt;
-      if (p.trailTimer >= TRAIL_SAMPLE_INTERVAL) {
+      if (p.trailTimer >= LIFECYCLE.trailSampleInterval) {
         p.trailTimer = 0;
         p.trailX[p.trailHead] = p.x;
         p.trailY[p.trailHead] = p.y;
@@ -171,33 +209,136 @@ export class ParticlePool {
         if (p.trailFill < TRAIL_LENGTH) p.trailFill++;
       }
 
-      const life = p.age / p.maxAge;
-
+      // ── Position update ───────────────────────
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
 
-      p.vx *= 0.99;
-      p.vy *= 0.99;
-      p.vz *= 0.99;
+      // ── Frame-rate-independent velocity damping ──
+      p.vx *= velDamp;
+      p.vy *= velDamp;
+      p.vz *= velDamp;
 
-      if (life < 0.1) {
-        p.size = p.targetSize * (life / 0.1);
-      } else if (life > 0.75) {
-        p.size = p.targetSize * (1 - (life - 0.75) / 0.25);
+      // ── Spawn envelope ────────────────────────
+      // Cubic ease-out ramp: fast rise, gentle settle
+      const spawnT = Math.min(p.age / LIFECYCLE.spawnDuration, 1);
+      const spawnEnv = 1 - Math.pow(1 - spawnT, LIFECYCLE.spawnEaseExponent);
+
+      if (p.isWhale) {
+        // ── Whale lifecycle ─────────────────────
+        const whaleSpawnT = Math.min(p.age / WHALE_CONFIG.spawnEaseDuration, 1);
+        const whaleSpawnEase = 1 - Math.pow(1 - whaleSpawnT, 3);
+
+        const timeLeft = p.maxAge - p.age;
+        const decayT = timeLeft < WHALE_CONFIG.glowFallTime
+          ? timeLeft / WHALE_CONFIG.glowFallTime
+          : 1;
+        const decayEase = decayT * decayT * decayT;
+
+        const riseT = Math.min(p.age / WHALE_CONFIG.glowRiseTime, 1);
+        const riseEase = 1 - Math.pow(1 - riseT, 3);
+
+        p.whaleGlowIntensity = riseEase * decayEase;
+
+        // Energy decays exponentially even for whales
+        p.energy *= energyDecay;
+
+        p.size = p.targetSize * whaleSpawnEase * decayEase;
+        p.opacity = whaleSpawnEase * decayEase;
+
+        if (whales.length < WHALE_CONFIG.maxSimultaneousWhales) {
+          whales.push(p);
+        }
       } else {
-        p.size = p.targetSize;
+        // ── Standard particle lifecycle ─────────
+
+        // Energy: pure exponential decay
+        p.energy *= energyDecay;
+
+        // Size: spawn envelope → sustain → eased shrink
+        if (life < LIFECYCLE.sizeFadeStart) {
+          p.size = p.targetSize * spawnEnv;
+        } else {
+          // Smooth shrink: quadratic/cubic ease-in toward 0
+          const shrinkProgress = (life - LIFECYCLE.sizeFadeStart) / (1 - LIFECYCLE.sizeFadeStart);
+          const shrinkFactor = 1 - Math.pow(shrinkProgress, LIFECYCLE.sizeShrinkExponent);
+          p.size = p.targetSize * shrinkFactor;
+        }
+
+        // Opacity: spawn envelope → sustain → exponential fade with smoothstep onset
+        if (life < LIFECYCLE.opacityFadeStart) {
+          // In the sustain window, just apply spawn envelope
+          p.opacity = spawnEnv;
+        } else {
+          // Smoothstep transition into exponential decay zone
+          const fadeProgress = (life - LIFECYCLE.opacityFadeStart) / (1 - LIFECYCLE.opacityFadeStart);
+          // smoothstep: 3t² - 2t³
+          const smoothFade = fadeProgress * fadeProgress * (3 - 2 * fadeProgress);
+          // Blend from full opacity toward exponential-decayed value
+          p.opacity = spawnEnv * (1 - smoothFade) + (spawnEnv * p.energy) * smoothFade;
+        }
+
+        // Modulate opacity by energy for natural intensity coupling
+        p.opacity *= (0.3 + 0.7 * p.energy);
       }
 
-      if (life < 0.05) {
-        p.opacity = life / 0.05;
-      } else if (life > 0.7) {
-        p.opacity = 1 - (life - 0.7) / 0.3;
-      } else {
-        p.opacity = 1;
+      // ── Early death: below visibility thresholds ──
+      if (p.opacity < LIFECYCLE.minOpacity ||
+          p.energy < LIFECYCLE.minEnergy ||
+          p.size < LIFECYCLE.minSize) {
+        p.active = false;
+        continue;
       }
 
       this.activeCount++;
+    }
+
+    // ── Gravitational attraction pass ───────────
+    if (whales.length > 0) {
+      const aRadius = WHALE_CONFIG.attractionRadius;
+      const aRadiusSq = aRadius * aRadius;
+      const aStrength = WHALE_CONFIG.attractionStrength;
+      const swirl = WHALE_CONFIG.swirlFactor;
+
+      for (let i = 0; i < this.capacity; i++) {
+        const p = this.particles[i];
+        if (!p.active || p.isWhale) continue;
+
+        for (const w of whales) {
+          const dx = w.x - p.x;
+          const dy = w.y - p.y;
+          const dz = w.z - p.z;
+          const distSq = dx * dx + dy * dy + dz * dz;
+
+          if (distSq > aRadiusSq || distSq < 0.01) continue;
+
+          const dist = Math.sqrt(distSq);
+          const normDist = dist / aRadius;
+          const edge = 1 - normDist * normDist * (3 - 2 * normDist);
+          const forceMag = aStrength * edge * w.whaleGlowIntensity / (1 + distSq);
+
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const nz = dz / dist;
+
+          // Tangential: cross(n, up) where up = (0, 0, 1) → (ny, -nx, 0)
+          let tx = ny;
+          let ty = -nx;
+          let tz = 0;
+          const tLen = Math.sqrt(tx * tx + ty * ty);
+          if (tLen > 0.001) {
+            tx /= tLen;
+            ty /= tLen;
+          }
+
+          const radial = forceMag * (1 - swirl);
+          const tangential = forceMag * swirl;
+
+          p.vx += (nx * radial + tx * tangential) * dt;
+          p.vy += (ny * radial + ty * tangential) * dt;
+          p.vz += (nz * radial + tz * tangential) * dt;
+        }
+      }
     }
   }
 
@@ -206,6 +347,8 @@ export class ParticlePool {
     colors: Float32Array,
     sizes: Float32Array,
     opacities: Float32Array,
+    energies: Float32Array,
+    isWhaleArr: Float32Array,
     indexMap: number[],
   ): number {
     let idx = 0;
@@ -224,6 +367,8 @@ export class ParticlePool {
       colors[j + 2] = p.b;
       sizes[idx] = p.size;
       opacities[idx] = p.opacity;
+      energies[idx] = p.energy;
+      isWhaleArr[idx] = p.isWhale ? 1 : 0;
       indexMap.push(i);
       idx++;
     }
@@ -235,6 +380,7 @@ export class ParticlePool {
     colors: Float32Array,
     sizes: Float32Array,
     opacities: Float32Array,
+    isWhaleArr: Float32Array,
   ): number {
     let idx = 0;
 
@@ -242,10 +388,11 @@ export class ParticlePool {
       const p = this.particles[i];
       if (!p.active || p.trailFill === 0) continue;
 
+      const whaleFlag = p.isWhale ? 1 : 0;
+
       for (let t = 0; t < p.trailFill; t++) {
-        // Read from oldest to newest
         const bufIdx = (p.trailHead - p.trailFill + t + TRAIL_LENGTH) % TRAIL_LENGTH;
-        const freshness = (t + 1) / p.trailFill; // 0→oldest, 1→newest
+        const freshness = (t + 1) / p.trailFill;
 
         const j = idx * 3;
         positions[j] = p.trailX[bufIdx];
@@ -255,7 +402,9 @@ export class ParticlePool {
         colors[j + 1] = p.g;
         colors[j + 2] = p.b;
         sizes[idx] = p.size * freshness * 0.4;
+        // Trail opacity couples with parent energy for coherent dimming
         opacities[idx] = p.opacity * freshness * 0.35;
+        isWhaleArr[idx] = whaleFlag;
         idx++;
       }
     }

@@ -1,11 +1,13 @@
 export interface ChainConfig {
   id: string;
   name: string;
+  abbr: string;
   chainId: number;
   rpcWs: string;
   rpcHttp: string;
   nativeCurrency: string;
   blockTime: number;
+  explorerTx: string;
   color: {
     primary: string;
     secondary: string;
@@ -18,11 +20,13 @@ export interface ChainConfig {
 interface ChainDef {
   id: string;
   name: string;
+  abbr: string;
   chainId: number;
   rpcWs: string;
   rpcHttp: string;
   nativeCurrency: string;
   blockTime: number;
+  explorerTx: string;
   color: {
     primary: string;
     secondary: string;
@@ -36,11 +40,13 @@ const CHAIN_DEFS: ChainDef[] = [
   {
     id: 'ethereum',
     name: 'Ethereum',
+    abbr: 'ETH',
     chainId: 1,
     rpcWs: 'wss://ethereum-rpc.publicnode.com',
     rpcHttp: 'https://ethereum-rpc.publicnode.com',
     nativeCurrency: 'ETH',
     blockTime: 12,
+    explorerTx: 'https://etherscan.io/tx/',
     color: {
       primary: '#627EEA',
       secondary: '#8B9FEF',
@@ -51,11 +57,13 @@ const CHAIN_DEFS: ChainDef[] = [
   {
     id: 'polygon',
     name: 'Polygon',
+    abbr: 'POLY',
     chainId: 137,
     rpcWs: 'wss://polygon-bor-rpc.publicnode.com',
     rpcHttp: 'https://polygon-bor-rpc.publicnode.com',
     nativeCurrency: 'MATIC',
     blockTime: 2,
+    explorerTx: 'https://polygonscan.com/tx/',
     color: {
       primary: '#8247E5',
       secondary: '#A77BF0',
@@ -66,11 +74,13 @@ const CHAIN_DEFS: ChainDef[] = [
   {
     id: 'arbitrum',
     name: 'Arbitrum',
+    abbr: 'ARB',
     chainId: 42161,
     rpcWs: 'wss://arbitrum-one-rpc.publicnode.com',
     rpcHttp: 'https://arbitrum-one-rpc.publicnode.com',
     nativeCurrency: 'ETH',
     blockTime: 0.25,
+    explorerTx: 'https://arbiscan.io/tx/',
     color: {
       primary: '#28A0F0',
       secondary: '#5BB8F5',

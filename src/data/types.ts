@@ -1,3 +1,20 @@
+export interface TokenTransfer {
+  contractAddress: string;
+  from: string;
+  to: string;
+  rawValue: bigint;
+  symbol: string;
+  decimals: number;
+  color: string;
+  isStablecoin: boolean;
+}
+
+export interface TokenInfo {
+  symbol: string;
+  displayValue: number;
+  isStablecoin: boolean;
+}
+
 export interface RawTransaction {
   hash: string;
   from: string;
@@ -8,6 +25,7 @@ export interface RawTransaction {
   blockNumber: number;
   chainId: string;
   timestamp: number;
+  tokenTransfer?: TokenTransfer;
 }
 
 export interface ProcessedTransaction {
@@ -26,4 +44,5 @@ export interface ProcessedTransaction {
     heat: number;
     color: [number, number, number];
   };
+  tokenInfo?: TokenInfo;
 }

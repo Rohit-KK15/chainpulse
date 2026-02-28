@@ -1,4 +1,5 @@
 import { CHAINS } from '../config/chains';
+import { getChainTokens, type TokenEntry } from '../config/tokenRegistry';
 import type { RawTransaction } from './types';
 
 type TransactionCallback = (txs: RawTransaction[]) => void;
@@ -28,25 +29,21 @@ export class SimulationProvider {
     const whaleThreshold = config?.whaleThreshold ?? 5;
     const blockTime = config?.blockTime ?? 12;
 
-    // Scale tick timing by block time relative to a "standard" 2s chain
-    // Faster chains (Arbitrum 0.25s) tick very frequently with small batches
-    // Slower chains (Ethereum 12s) tick less often but deliver bigger batches
-    const speedFactor = Math.max(0.1, 2 / blockTime); // >1 for fast chains, <1 for slow
+    // Tick interval: all chains emit at a steady ~300-800ms cadence
+    // Batch size scales slightly with block time to reflect throughput differences
+    const batchBase = blockTime <= 1 ? 3 : blockTime <= 4 ? 2 : 1;
 
     const tick = () => {
-      // Bursty batch sizes scaled by block time
-      // Slow chains (Ethereum) get bigger batches to compensate for less frequent ticks
-      const batchScale = Math.max(1, blockTime / 2);
       let batchSize: number;
       if (this.burstCooldown > 0) {
-        batchSize = Math.floor((Math.random() * 15 + 8) * batchScale);
+        batchSize = Math.floor(Math.random() * 6 + 4) * batchBase;
         this.burstCooldown--;
       } else if (Math.random() < 0.08) {
         // 8% chance of burst
-        batchSize = Math.floor((Math.random() * 20 + 10) * batchScale);
+        batchSize = Math.floor(Math.random() * 8 + 5) * batchBase;
         this.burstCooldown = Math.floor(Math.random() * 3) + 1;
       } else {
-        batchSize = Math.floor((Math.random() * 6 + 1) * batchScale);
+        batchSize = Math.floor(Math.random() * 4 + 1) * batchBase;
       }
 
       // Gas price drifts over time (mean-reverting random walk)
@@ -83,26 +80,64 @@ export class SimulationProvider {
           value,
           gasPrice: gasPrice < 0n ? 10000000000n : gasPrice,
           gasLimit: BigInt(Math.floor(Math.random() * 500000 + 21000)),
-          blockNumber: Math.floor(Date.now() / 12000),
+          blockNumber: Math.floor(Date.now() / (blockTime * 1000)),
           chainId: this.chainId,
           timestamp: Math.floor(Date.now() / 1000),
         });
       }
 
+      // ~30% chance to generate 1-3 token transfers per tick
+      if (Math.random() < 0.3) {
+        const tokens = getChainTokens(this.chainId);
+        if (tokens.length > 0) {
+          const tokenCount = Math.floor(Math.random() * 3) + 1;
+          for (let i = 0; i < tokenCount; i++) {
+            const token = tokens[Math.floor(Math.random() * tokens.length)];
+            const tokenValue = this.generateTokenValue(token);
+            const rawValue = BigInt(Math.floor(tokenValue * Math.pow(10, token.decimals)));
+
+            txs.push({
+              hash: `0x${(this.counter++).toString(16).padStart(64, 'b')}`,
+              from: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
+              to: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
+              value: 0n,
+              gasPrice: BigInt(Math.floor((this.baseGas + (Math.random() - 0.3) * 10) * 1e9)),
+              gasLimit: BigInt(Math.floor(Math.random() * 200000 + 50000)),
+              blockNumber: Math.floor(Date.now() / (blockTime * 1000)),
+              chainId: this.chainId,
+              timestamp: Math.floor(Date.now() / 1000),
+              tokenTransfer: {
+                contractAddress: token.address,
+                from: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
+                to: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
+                rawValue,
+                symbol: token.symbol,
+                decimals: token.decimals,
+                color: token.color,
+                isStablecoin: token.isStablecoin,
+              },
+            });
+          }
+        }
+      }
+
       this.callback(txs);
 
-      // Variable timing scaled by chain speed
-      // Fast chains (Arbitrum): ~100-400ms ticks
-      // Medium chains (Polygon): ~250-1000ms ticks
-      // Slow chains (Ethereum): ~800-2500ms ticks, but bigger batches above
-      const baseDelay = this.burstCooldown > 0
-        ? 200 + Math.random() * 400
-        : 500 + Math.random() * 2000;
-      const delay = Math.min(baseDelay / speedFactor, 3000);
+      // Steady cadence for all chains — smooth real-time feel
+      const delay = this.burstCooldown > 0
+        ? 200 + Math.random() * 300
+        : 400 + Math.random() * 600;
       this.timeoutId = setTimeout(tick, delay);
     };
 
     tick();
+  }
+
+  private generateTokenValue(token: TokenEntry): number {
+    if (token.isStablecoin) {
+      return powerLaw(1, 50_000, 2.5);
+    }
+    return powerLaw(0.001, 100, 2.5);
   }
 
   stop(): void {

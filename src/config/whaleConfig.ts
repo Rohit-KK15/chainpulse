@@ -1,9 +1,9 @@
 export const WHALE_CONFIG = {
   // Glow aura
-  glowBaseRadius: 4.0,
-  glowMaxIntensity: 0.35,
-  glowRiseTime: 2.0,
-  glowFallTime: 3.0,
+  glowBaseRadius: 5.0,
+  glowMaxIntensity: 0.45,
+  glowRiseTime: 2.5,
+  glowFallTime: 3.5,
 
   // Gravitational attraction
   attractionRadius: 6.0,

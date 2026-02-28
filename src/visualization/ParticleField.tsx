@@ -11,13 +11,18 @@ import { activityMonitor } from '../processing/ActivityMonitor';
 import { drainBlockPulses } from './blockPulseEvents';
 import { particleVertexShader, particleFragmentShader } from './shaders';
 
-const MAX_PARTICLES = 600;
+// Reduce particle count on low-end / mobile devices
+const IS_LOW_END = typeof navigator !== 'undefined' && (
+  navigator.hardwareConcurrency <= 4 || ('ontouchstart' in window && window.innerWidth < 768)
+);
+const MAX_PARTICLES = IS_LOW_END ? 300 : 600;
 const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
-const DRAIN_PER_FRAME = 6;
+const DRAIN_PER_FRAME = IS_LOW_END ? 4 : 6;
 const SPAWN_RADIUS = 3.5;
 const PULSE_NUDGE_RADIUS = 5;
 const PULSE_NUDGE_STRENGTH = 0.1;
 const PULSE_NUDGE_DURATION = 2.0;
+const TOUCH_TAP_THRESHOLD = 10; // px — touch moves within this are taps, not drags
 
 interface ActivePulse {
   cx: number; cy: number; cz: number;
@@ -95,7 +100,7 @@ export function ParticleField() {
     return { trailGeo: geo, trailMat: mat };
   }, [gl]);
 
-  // Click/pointer handler for particle inspection (#8 + #14)
+  // Click/pointer handler for particle inspection
   const handlePointerDown = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
       const pool = poolRef.current;

@@ -475,7 +475,7 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
         <div className="info-row info-sub">
           {CHAIN_LEGEND.map((c) => (
             <span key={c.name} className="info-chip">
-              <span className="info-dot" style={{ background: c.color }} />
+              <span className="info-dot info-dot--pulse" style={{ background: c.color }} />
               {c.name}
             </span>
           ))}
@@ -496,12 +496,12 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="info-row">
-          <span className="info-icon">🐋</span>
+          <span className="info-icon info-whale-glow" />
           <span>Large glowing particles = high-value whale txns</span>
         </div>
 
         <div className="info-row">
-          <span className="info-icon info-ring" />
+          <span className="info-icon info-ring info-ring--expand" />
           <span>Expanding rings = new blocks arriving</span>
         </div>
 

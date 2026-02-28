@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ProcessedTransaction } from '../data/types';
+import { CHAINS } from '../config/chains';
 
 export interface InspectedTx {
   hash: string;
@@ -29,6 +30,9 @@ export interface WhaleRecord {
 interface AppState {
   focusedChain: string | null;
   setFocusedChain: (chain: string | null) => void;
+
+  cameraTarget: [number, number, number];
+  cameraDistance: number;
 
   isSimulation: boolean;
   setSimulation: (sim: boolean) => void;
@@ -113,7 +117,16 @@ const prefs = loadPrefs();
 
 export const useStore = create<AppState>((set, get) => ({
   focusedChain: null,
-  setFocusedChain: (chain) => set({ focusedChain: chain }),
+  setFocusedChain: (chain) => {
+    const target: [number, number, number] = chain
+      ? (CHAINS[chain]?.center ?? [0, 0, 0])
+      : [0, 0, 0];
+    const distance = chain ? 16 : 22;
+    set({ focusedChain: chain, cameraTarget: target, cameraDistance: distance });
+  },
+
+  cameraTarget: [0, 0, 0],
+  cameraDistance: 22,
 
   isSimulation: prefs.isSimulation,
   setSimulation: (sim) => {

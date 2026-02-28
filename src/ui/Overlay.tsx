@@ -3,6 +3,8 @@ import { useStore, InspectedTx, WhaleRecord } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 import { walletManager } from '../wallet/WalletManager';
 import { useENSName } from '../utils/ensCache';
+import { soundEngine } from '../audio/SoundEngine';
+import { fetchPortfolio } from '../wallet/PortfolioTracker';
 
 // ── Clipboard helper ───────────────────────────
 
@@ -288,6 +290,8 @@ const StatsStrip = React.memo(function StatsStrip() {
   const recentWhales = useStore((s) => s.recentWhales);
   const latestBlocks = useStore((s) => s.latestBlocks);
   const chainConnected = useStore((s) => s.chainConnected);
+  const isWalletConnected = useStore((s) => s.isWalletConnected);
+  const netFlow = useStore((s) => s.netFlow);
 
   const [txRate, setTxRate] = useState(0);
   // Force re-render every second for health indicators
@@ -315,6 +319,22 @@ const StatsStrip = React.memo(function StatsStrip() {
         <span className="stat-value">{recentWhales.length}</span>
         <span className="stat-label">WHALES</span>
       </div>
+      {isWalletConnected && (netFlow.sent > 0 || netFlow.received > 0) && (
+        <>
+          <div className="stat-divider" />
+          <div className="stat net-flow-stat">
+            {netFlow.received >= netFlow.sent ? (
+              <span className="net-flow-arrow net-flow-in" title="Net receiving">↑</span>
+            ) : (
+              <span className="net-flow-arrow net-flow-out" title="Net sending">↓</span>
+            )}
+            <span className="stat-value">
+              {Math.abs(netFlow.received - netFlow.sent).toFixed(4)}
+            </span>
+            <span className="stat-label">NET</span>
+          </div>
+        </>
+      )}
       <div className="stat-divider" />
       {Object.values(CHAINS).map((chain) => {
         const block = latestBlocks[chain.id];
@@ -757,6 +777,113 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
   );
 }
 
+// ── Portfolio Panel ───────────────────────────
+
+function PortfolioPanel() {
+  const isWalletConnected = useStore((s) => s.isWalletConnected);
+  const walletAddress = useStore((s) => s.walletAddress);
+  const portfolio = useStore((s) => s.portfolio);
+  const portfolioVisible = useStore((s) => s.portfolioVisible);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isWalletConnected || !walletAddress) return;
+    setLoading(true);
+    fetchPortfolio(walletAddress)
+      .then((balances) => {
+        useStore.getState().setPortfolio(balances);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [isWalletConnected, walletAddress]);
+
+  if (!isWalletConnected) return null;
+
+  const toggleVisible = () => useStore.getState().setPortfolioVisible(!portfolioVisible);
+
+  return (
+    <>
+      <button
+        className="portfolio-toggle"
+        onClick={toggleVisible}
+        title={portfolioVisible ? 'Hide portfolio' : 'Show portfolio'}
+      >
+        {portfolioVisible ? '📊' : '📊'}
+      </button>
+      {portfolioVisible && (
+        <div className="portfolio-panel">
+          <div className="info-panel-header">
+            <span>Portfolio</span>
+            <button className="detail-close" onClick={toggleVisible}>x</button>
+          </div>
+          {loading ? (
+            <div className="portfolio-loading">Loading balances...</div>
+          ) : portfolio.length === 0 ? (
+            <div className="portfolio-empty">No balances found</div>
+          ) : (
+            <div className="portfolio-list">
+              {portfolio.map((item, i) => {
+                const chain = CHAINS[item.chain];
+                return (
+                  <div key={`${item.chain}-${item.symbol}-${i}`} className="portfolio-item">
+                    <span className="portfolio-dot" style={{ background: item.color }} />
+                    <span className="portfolio-symbol">{item.symbol}</span>
+                    <span className="portfolio-balance">
+                      {item.balance < 0.01 ? '<0.01' : item.balance.toFixed(4)}
+                    </span>
+                    <span className="portfolio-chain" style={{ color: chain?.color.primary }}>
+                      {chain?.abbr ?? item.chain}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Audio Toggle ──────────────────────────────
+
+function AudioToggle() {
+  const audioEnabled = useStore((s) => s.audioEnabled);
+
+  const handleToggle = () => {
+    const next = !audioEnabled;
+    useStore.getState().setAudioEnabled(next);
+    if (next) {
+      soundEngine.enable();
+    } else {
+      soundEngine.disable();
+    }
+  };
+
+  return (
+    <button
+      className={`audio-toggle ${audioEnabled ? 'audio-toggle--on' : ''}`}
+      onClick={handleToggle}
+      title={audioEnabled ? 'Mute audio' : 'Enable audio'}
+      aria-label={audioEnabled ? 'Mute audio' : 'Enable audio'}
+    >
+      {audioEnabled ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <line x1="23" y1="9" x2="17" y2="15" />
+          <line x1="17" y1="9" x2="23" y2="15" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 // ── Onboarding Welcome Card ───────────────────
 
 const ONBOARDING_KEY = 'chainpulse_onboarded';
@@ -884,6 +1011,8 @@ export function Overlay() {
           <TxCounter />
           <ModeToggle />
           <InfoButton onClick={handleToggleInfo} />
+          <AudioToggle />
+          <PortfolioPanel />
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 

@@ -88,6 +88,17 @@ interface AppState {
   isWalletConnected: boolean;
   setWalletState: (address: string | null, chainId: number | null, balance: string | null) => void;
 
+  // Net flow tracking (when wallet connected)
+  netFlow: { sent: number; received: number };
+  addNetFlow: (direction: 'sent' | 'received', amount: number) => void;
+  resetNetFlow: () => void;
+
+  // Portfolio
+  portfolio: { symbol: string; balance: number; chain: string; color: string }[];
+  portfolioVisible: boolean;
+  setPortfolio: (p: { symbol: string; balance: number; chain: string; color: string }[]) => void;
+  setPortfolioVisible: (v: boolean) => void;
+
   // Audio
   audioEnabled: boolean;
   setAudioEnabled: (v: boolean) => void;
@@ -247,6 +258,23 @@ export const useStore = create<AppState>((set, get) => ({
       walletBalance: balance,
       isWalletConnected: address !== null,
     }),
+
+  // Net flow
+  netFlow: { sent: 0, received: 0 },
+  addNetFlow: (direction, amount) =>
+    set((s) => ({
+      netFlow: {
+        sent: s.netFlow.sent + (direction === 'sent' ? amount : 0),
+        received: s.netFlow.received + (direction === 'received' ? amount : 0),
+      },
+    })),
+  resetNetFlow: () => set({ netFlow: { sent: 0, received: 0 } }),
+
+  // Portfolio
+  portfolio: [],
+  portfolioVisible: false,
+  setPortfolio: (p) => set({ portfolio: p }),
+  setPortfolioVisible: (v) => set({ portfolioVisible: v }),
 
   // Audio
   audioEnabled: false,

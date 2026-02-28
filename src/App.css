@@ -440,6 +440,23 @@ button:focus-visible,
   50% { transform: scale(1.15); }
 }
 
+.net-flow-stat {
+  gap: 4px;
+}
+
+.net-flow-arrow {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+
+.net-flow-in {
+  color: rgba(80, 200, 120, 0.9);
+}
+
+.net-flow-out {
+  color: rgba(255, 100, 100, 0.9);
+}
+
 .stat-gas {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
@@ -1132,6 +1149,124 @@ button:focus-visible,
   text-align: right;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+/* ── Audio Toggle ─────────────────────────────── */
+
+.audio-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-round);
+  border: 1px solid var(--border-dim);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
+  align-self: flex-start;
+}
+
+.audio-toggle:hover {
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
+.audio-toggle--on {
+  border-color: rgba(80, 200, 120, 0.3);
+  color: rgba(80, 200, 120, 0.8);
+}
+
+/* ── Portfolio Panel ─────────────────────────── */
+
+.portfolio-toggle {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  padding: 3px 6px;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.portfolio-toggle:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-dim);
+}
+
+.portfolio-panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(8, 8, 20, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  z-index: 80;
+}
+
+.portfolio-loading,
+.portfolio-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-lg) 0;
+}
+
+.portfolio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.portfolio-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.portfolio-item:last-child {
+  border-bottom: none;
+}
+
+.portfolio-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-round);
+  flex-shrink: 0;
+}
+
+.portfolio-symbol {
+  color: var(--text-primary);
+  font-weight: 600;
+  min-width: 40px;
+}
+
+.portfolio-balance {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  flex: 1;
+  text-align: right;
+}
+
+.portfolio-chain {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  min-width: 28px;
+  text-align: right;
 }
 
 /* ── Onboarding Card ──────────────────────────── */

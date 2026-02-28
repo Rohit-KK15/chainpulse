@@ -34,6 +34,8 @@ export function useChainData(): void {
     const chainIds = Object.keys(CHAINS);
 
     function setupProviders() {
+      let hasData = false;
+
       for (const chainId of chainIds) {
         store.setChainConnected(chainId, false);
 
@@ -47,6 +49,11 @@ export function useChainData(): void {
           const s = useStore.getState();
           s.incrementTxCount(processed.length);
           s.addGasPrices(processed.map((tx) => tx.gasPrice));
+
+          if (!hasData) {
+            hasData = true;
+            s.setInitialized(true);
+          }
 
           if (processed.length > 0) {
             const prevBlock = s.latestBlocks[chainId];
@@ -72,29 +79,36 @@ export function useChainData(): void {
           }
         };
 
+        const fallbackToSimulation = () => {
+          const sim = new SimulationProvider(chainId, handleRawTransactions);
+          sim.start();
+          providersRef.current.push(sim);
+          useStore.getState().setChainConnected(chainId, true);
+          useStore.getState().setChainFailed(chainId, true);
+        };
+
         if (isSimulation) {
           const sim = new SimulationProvider(chainId, handleRawTransactions);
           sim.start();
           providersRef.current.push(sim);
           useStore.getState().setChainConnected(chainId, true);
         } else {
-          const conn = new ConnectionManager(chainId, handleRawTransactions);
-          conn.setStatusCallback((status) => {
-            if (status === 'connected') {
-              useStore.getState().setChainConnected(chainId, true);
-            } else {
-              useStore.getState().setChainConnected(chainId, false);
-            }
-          });
-          providersRef.current.push(conn);
-          conn.connect().catch(() => {
-            // ConnectionManager now handles reconnection internally;
-            // after max retries, fall back to simulation
-            const sim = new SimulationProvider(chainId, handleRawTransactions);
-            sim.start();
-            providersRef.current.push(sim);
-            useStore.getState().setChainConnected(chainId, true);
-          });
+          try {
+            const conn = new ConnectionManager(chainId, handleRawTransactions);
+            conn.setStatusCallback((status) => {
+              if (status === 'connected') {
+                useStore.getState().setChainConnected(chainId, true);
+              } else {
+                useStore.getState().setChainConnected(chainId, false);
+              }
+            });
+            providersRef.current.push(conn);
+            conn.connect().catch(() => {
+              fallbackToSimulation();
+            });
+          } catch {
+            fallbackToSimulation();
+          }
         }
       }
     }

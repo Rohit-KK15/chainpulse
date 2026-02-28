@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useStore, InspectedTx } from '../stores/useStore';
+import { useStore, InspectedTx, WhaleRecord } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 
 // ── Clipboard helper ───────────────────────────
@@ -87,6 +87,13 @@ function CopyField({ label, value, mono }: { label: string; value: string; mono?
       </button>
     </div>
   );
+}
+
+// ── Address formatting ────────────────────────
+
+function truncateAddress(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 // ── Time formatting ───────────────────────────
@@ -258,14 +265,27 @@ const TxCounter = React.memo(function TxCounter() {
 
 // ── Stats Strip ────────────────────────────────
 
+function getConnectionHealth(chainId: string, blockTime: number): 'healthy' | 'warning' | 'stale' | 'disconnected' {
+  const s = useStore.getState();
+  if (!s.chainConnected[chainId]) return 'disconnected';
+  const lastBlockTs = s.lastBlockTimestamps[chainId];
+  if (!lastBlockTs) return 'healthy';
+  const elapsed = (Date.now() - lastBlockTs) / 1000;
+  if (elapsed > blockTime * 5) return 'stale';
+  if (elapsed > blockTime * 2) return 'warning';
+  return 'healthy';
+}
+
 const StatsStrip = React.memo(function StatsStrip() {
   const txCount = useStore((s) => s.txCount);
-  const avgGas = useStore((s) => s.avgGas);
+  const avgGasPerChain = useStore((s) => s.avgGasPerChain);
   const recentWhales = useStore((s) => s.recentWhales);
   const latestBlocks = useStore((s) => s.latestBlocks);
   const chainConnected = useStore((s) => s.chainConnected);
 
   const [txRate, setTxRate] = useState(0);
+  // Force re-render every second for health indicators
+  const [, setTick] = useState(0);
   const prevCountRef = useRef(0);
 
   useEffect(() => {
@@ -274,21 +294,16 @@ const StatsStrip = React.memo(function StatsStrip() {
       const current = useStore.getState().txCount;
       setTxRate(current - prevCountRef.current);
       prevCountRef.current = current;
+      setTick((t) => t + 1);
     }, 1000);
     return () => clearInterval(id);
   }, []);
-
-  const safeAvgGas = formatGwei(avgGas);
 
   return (
     <div className="stats-strip">
       <div className="stat">
         <span className="stat-value">{txRate}</span>
         <span className="stat-label">TX/S</span>
-      </div>
-      <div className="stat">
-        <span className="stat-value">{safeAvgGas}</span>
-        <span className="stat-label">GWEI</span>
       </div>
       <div className="stat">
         <span className="stat-value">{recentWhales.length}</span>
@@ -298,11 +313,19 @@ const StatsStrip = React.memo(function StatsStrip() {
       {Object.values(CHAINS).map((chain) => {
         const block = latestBlocks[chain.id];
         const connected = chainConnected[chain.id];
-        const statusLabel = connected ? `${chain.name}: connected` : `${chain.name}: disconnected`;
+        const health = getConnectionHealth(chain.id, chain.blockTime);
+        const chainGas = avgGasPerChain[chain.id];
+        const healthClass = health === 'warning' ? 'health-warning'
+          : health === 'stale' ? 'health-stale'
+          : connected ? 'connected' : '';
+        const statusLabel = health === 'stale' ? `${chain.name}: stale`
+          : health === 'warning' ? `${chain.name}: delayed`
+          : connected ? `${chain.name}: connected`
+          : `${chain.name}: disconnected`;
         return (
           <div key={chain.id} className="stat chain-stat">
             <span
-              className={`status-dot ${connected ? 'connected' : ''}`}
+              className={`status-dot ${healthClass}`}
               style={{ background: connected ? chain.color.primary : undefined }}
               role="status"
               aria-label={statusLabel}
@@ -313,6 +336,9 @@ const StatsStrip = React.memo(function StatsStrip() {
               <span className="stat-block">#{block.toLocaleString()}</span>
             ) : (
               <span className="stat-block">--</span>
+            )}
+            {chainGas !== undefined && (
+              <span className="stat-gas">{formatGwei(chainGas)}</span>
             )}
           </div>
         );
@@ -518,6 +544,111 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Whale History Panel ───────────────────────
+
+function WhaleHistoryItem({ record }: { record: WhaleRecord }) {
+  const chain = CHAINS[record.chainId];
+  return (
+    <a
+      className="whale-history-item"
+      href={`${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${record.hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <span className="whale-history-dot" style={{ background: chain?.color.primary }} />
+      <span className="whale-history-value">
+        {record.value.toFixed(2)} {record.tokenSymbol ?? chain?.nativeCurrency}
+      </span>
+      <span className="whale-history-addr">{truncateAddress(record.from)}</span>
+      <span className="whale-history-time">{formatRelativeTime(record.timestamp)}</span>
+    </a>
+  );
+}
+
+function WhaleHistoryPanel({ onClose }: { onClose: () => void }) {
+  const whaleHistory = useStore((s) => s.whaleHistory);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        if ((e.target as HTMLElement).closest('.whale-history-toggle')) return;
+        onClose();
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div ref={panelRef} className="whale-history-panel">
+      <div className="info-panel-header">
+        <span>Whale History</span>
+        <button className="detail-close" onClick={onClose}>x</button>
+      </div>
+      {whaleHistory.length === 0 ? (
+        <div className="whale-history-empty">No whale transactions yet</div>
+      ) : (
+        <div className="whale-history-list">
+          {whaleHistory.map((record) => (
+            <WhaleHistoryItem key={record.hash} record={record} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Whale Alerts Panel ────────────────────────
+
+function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/types').ProcessedTransaction[] }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  return (
+    <div className="whale-alerts-container">
+      <div className="whale-alerts">
+        {recentWhales.map((whale) => {
+          const chain = CHAINS[whale.chainId];
+          return (
+            <a
+              key={whale.hash}
+              className="whale-alert"
+              href={`${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${whale.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                '--chain-color': chain?.color.primary ?? '#fff',
+              } as React.CSSProperties}
+            >
+              <span className="whale-alert-chain-dot" style={{ background: chain?.color.primary }} />
+              <span className="whale-alert-chain-name">{chain?.abbr}</span>
+              <span className="whale-value">
+                {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
+              </span>
+              <span className="whale-alert-from">{truncateAddress(whale.from)}</span>
+              <span className="whale-alert-time">{formatRelativeTime(whale.timestamp)}</span>
+            </a>
+          );
+        })}
+      </div>
+      <button
+        className="whale-history-toggle"
+        onClick={() => setHistoryOpen((prev) => !prev)}
+        title="Whale history"
+      >
+        🐋
+      </button>
+      {historyOpen && <WhaleHistoryPanel onClose={() => setHistoryOpen(false)} />}
+    </div>
+  );
+}
+
 // ── Onboarding Welcome Card ───────────────────
 
 const ONBOARDING_KEY = 'chainpulse_onboarded';
@@ -645,25 +776,7 @@ export function Overlay() {
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 
-        <div className="whale-alerts">
-          {recentWhales.map((whale) => (
-            <a
-              key={whale.hash}
-              className="whale-alert"
-              href={`${CHAINS[whale.chainId]?.explorerTx ?? 'https://etherscan.io/tx/'}${whale.hash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                '--chain-color': CHAINS[whale.chainId]?.color.primary ?? '#fff',
-              } as React.CSSProperties}
-            >
-              <span className="whale-emoji">🐋</span>
-              <span className="whale-value">
-                {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? CHAINS[whale.chainId]?.nativeCurrency}
-              </span>
-            </a>
-          ))}
-        </div>
+        <WhaleAlertsPanel recentWhales={recentWhales} />
       </div>
 
       {/* Tx detail panel */}

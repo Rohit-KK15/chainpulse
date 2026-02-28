@@ -53,11 +53,16 @@ interface AppState {
   resetTxCount: () => void;
 
   latestBlocks: Record<string, number>;
+  lastBlockTimestamps: Record<string, number>;
   setLatestBlock: (chainId: string, block: number) => void;
 
   gasPrices: number[];
   avgGas: number;
   addGasPrices: (prices: number[]) => void;
+
+  gasPricesPerChain: Record<string, number[]>;
+  avgGasPerChain: Record<string, number>;
+  addChainGasPrices: (chainId: string, prices: number[]) => void;
 
   recentWhales: ProcessedTransaction[];
   addWhale: (tx: ProcessedTransaction) => void;
@@ -139,9 +144,11 @@ export const useStore = create<AppState>((set, get) => ({
   resetTxCount: () => set({ txCount: 0 }),
 
   latestBlocks: {},
+  lastBlockTimestamps: {},
   setLatestBlock: (chainId, block) =>
     set((s) => ({
       latestBlocks: { ...s.latestBlocks, [chainId]: block },
+      lastBlockTimestamps: { ...s.lastBlockTimestamps, [chainId]: Date.now() },
     })),
 
   gasPrices: [],
@@ -155,6 +162,21 @@ export const useStore = create<AppState>((set, get) => ({
         ? updated.reduce((a, b) => a + b, 0) / updated.length
         : 0;
       return { gasPrices: updated, avgGas: avg };
+    }),
+
+  gasPricesPerChain: {},
+  avgGasPerChain: {},
+  addChainGasPrices: (chainId, prices) =>
+    set((s) => {
+      const valid = prices.filter((p) => Number.isFinite(p));
+      if (valid.length === 0) return s;
+      const existing = s.gasPricesPerChain[chainId] ?? [];
+      const updated = [...existing, ...valid].slice(-MAX_GAS_SAMPLES);
+      const avg = updated.reduce((a, b) => a + b, 0) / updated.length;
+      return {
+        gasPricesPerChain: { ...s.gasPricesPerChain, [chainId]: updated },
+        avgGasPerChain: { ...s.avgGasPerChain, [chainId]: avg },
+      };
     }),
 
   recentWhales: [],

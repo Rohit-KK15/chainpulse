@@ -48,7 +48,9 @@ export function useChainData(): void {
 
           const s = useStore.getState();
           s.incrementTxCount(processed.length);
-          s.addGasPrices(processed.map((tx) => tx.gasPrice));
+          const gasPrices = processed.map((tx) => tx.gasPrice);
+          s.addGasPrices(gasPrices);
+          s.addChainGasPrices(chainId, gasPrices);
 
           if (!hasData) {
             hasData = true;

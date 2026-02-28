@@ -280,6 +280,7 @@ button:focus-visible,
   color: var(--text-secondary);
   padding: var(--space-md) 18px;
   border-radius: var(--radius-pill);
+  pointer-events: auto;
   cursor: pointer;
   font-family: inherit;
   font-size: var(--font-size-sm);
@@ -390,6 +391,7 @@ button:focus-visible,
   flex-direction: column;
   gap: var(--space-md);
   position: relative;
+  pointer-events: auto;
 }
 
 .hud-item {
@@ -1195,6 +1197,7 @@ button:focus-visible,
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   cursor: pointer;
+  pointer-events: auto;
   padding: 3px 6px;
   display: flex;
   align-items: center;
@@ -1216,6 +1219,7 @@ button:focus-visible,
   align-items: center;
   justify-content: center;
   z-index: 300;
+  pointer-events: auto;
   animation: fadeIn 0.2s ease-out;
 }
 
@@ -1275,6 +1279,7 @@ button:focus-visible,
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   cursor: pointer;
+  pointer-events: auto;
   padding: 3px 6px;
   transition: all 0.15s ease;
   line-height: 1;
@@ -1299,6 +1304,7 @@ button:focus-visible,
   border-radius: var(--radius-md);
   padding: var(--space-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
   z-index: 80;
 }
 
@@ -1371,6 +1377,7 @@ button:focus-visible,
   font-family: var(--font-mono);
   padding: 6px 16px;
   cursor: pointer;
+  pointer-events: auto;
   transition: all 0.15s ease;
 }
 
@@ -1396,6 +1403,7 @@ button:focus-visible,
   border: 1px solid var(--border-dim);
   border-radius: var(--radius-md);
   padding: 8px 12px;
+  pointer-events: auto;
   z-index: 60;
 }
 

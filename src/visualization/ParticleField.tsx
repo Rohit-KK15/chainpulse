@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback } from 'react';
+import { useRef, useMemo, useCallback, useEffect } from 'react';
 import { useFrame, useThree, ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ParticlePool, TRAIL_LENGTH } from './ParticlePool';
@@ -15,9 +15,9 @@ const MAX_PARTICLES = 600;
 const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
 const DRAIN_PER_FRAME = 6;
 const SPAWN_RADIUS = 3.5;
-const PULSE_NUDGE_RADIUS = 6;
-const PULSE_NUDGE_STRENGTH = 0.3;
-const PULSE_NUDGE_DURATION = 1.2;
+const PULSE_NUDGE_RADIUS = 5;
+const PULSE_NUDGE_STRENGTH = 0.1;
+const PULSE_NUDGE_DURATION = 2.0;
 
 interface ActivePulse {
   cx: number; cy: number; cz: number;
@@ -31,13 +31,15 @@ export function ParticleField() {
   const poolRef = useRef(new ParticlePool(MAX_PARTICLES));
   const indexMapRef = useRef<number[]>([]);
   const activePulses = useRef<ActivePulse[]>([]);
+  const pulsesToRemoveRef = useRef<number[]>([]);
   const { gl, camera } = useThree();
   const transitionOpacity = useRef(1);
 
   // Expose pool ref at module level
-  if (!particlePoolRef.current) {
+  useEffect(() => {
     particlePoolRef.current = poolRef.current;
-  }
+    return () => { particlePoolRef.current = null; };
+  }, []);
 
   // Main particle geometry + material
   const { mainGeo, mainMat } = useMemo(() => {
@@ -114,6 +116,7 @@ export function ParticleField() {
             timestamp: p.timestamp,
             screenX: event.clientX ?? event.nativeEvent.clientX,
             screenY: event.clientY ?? event.nativeEvent.clientY,
+            tokenSymbol: p.tokenSymbol || undefined,
           });
           event.stopPropagation();
           return;
@@ -152,6 +155,7 @@ export function ParticleField() {
           timestamp: p.timestamp,
           screenX: event.clientX ?? event.nativeEvent.clientX,
           screenY: event.clientY ?? event.nativeEvent.clientY,
+          tokenSymbol: p.tokenSymbol || undefined,
         });
       } else {
         useStore.getState().setInspectedTx(null);
@@ -222,6 +226,7 @@ export function ParticleField() {
         whaleValue,
         gasPrice: tx.gasPrice,
         timestamp: tx.timestamp,
+        tokenSymbol: tx.tokenInfo?.symbol ?? '',
       });
 
       // Value spectrum: modulate initial energy by transaction intensity
@@ -251,7 +256,8 @@ export function ParticleField() {
     }
 
     // Update and apply active pulse nudges
-    const pulsesToRemove: number[] = [];
+    const pulsesToRemove = pulsesToRemoveRef.current;
+    pulsesToRemove.length = 0;
     for (let pi = 0; pi < activePulses.current.length; pi++) {
       const pulse = activePulses.current[pi];
       pulse.age += delta;

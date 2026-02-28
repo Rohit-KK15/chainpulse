@@ -6,8 +6,8 @@ import { drainBlockPulses } from './blockPulseEvents';
 import { blockPulseVertexShader, blockPulseFragmentShader } from './shaders';
 
 const MAX_PULSES = 6;
-const PULSE_DURATION = 1.8;
-const PULSE_MAX_RADIUS = 8;
+const PULSE_DURATION = 3.5;
+const PULSE_MAX_RADIUS = 6;
 
 interface PulseState {
   active: boolean;
@@ -32,9 +32,11 @@ export function BlockPulse() {
     })),
   );
 
-  const planeGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  const circleGeo = useMemo(() => new THREE.CircleGeometry(0.5, 64), []);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
+    const time = state.clock.elapsedTime;
+
     // Drain new block pulse events
     const events = drainBlockPulses('blockPulseVisual');
     for (const ev of events) {
@@ -74,17 +76,18 @@ export function BlockPulse() {
       group.visible = true;
       group.position.set(p.cx, p.cy, p.cz);
 
-      // Scale grows with ease-out
-      const easeProgress = 1 - Math.pow(1 - progress, 2);
+      // Scale grows with gentle ease-out (slower expansion)
+      const easeProgress = 1 - Math.pow(1 - progress, 1.5);
       const radius = PULSE_MAX_RADIUS * easeProgress;
       group.scale.setScalar(radius);
 
-      // Opacity fades out with cubic ease
-      const opacity = Math.pow(1 - progress, 3);
+      // Opacity: gradual linear-ish fade instead of steep quadratic dropoff
+      const opacity = Math.pow(1 - progress, 1.2) * 0.45;
 
       mat.uniforms.uColor.value.set(p.r, p.g, p.b);
       mat.uniforms.uProgress.value = easeProgress;
       mat.uniforms.uOpacity.value = opacity;
+      mat.uniforms.uTime.value = time;
     });
   });
 
@@ -97,7 +100,7 @@ export function BlockPulse() {
           visible={false}
         >
           <Billboard>
-            <mesh geometry={planeGeo}>
+            <mesh geometry={circleGeo}>
               <shaderMaterial
                 ref={(el) => { materials.current[i] = el; }}
                 vertexShader={blockPulseVertexShader}
@@ -106,6 +109,7 @@ export function BlockPulse() {
                   uColor: { value: new THREE.Color(1, 1, 1) },
                   uProgress: { value: 0 },
                   uOpacity: { value: 0 },
+                  uTime: { value: 0 },
                 }}
                 transparent
                 depthWrite={false}

@@ -22,7 +22,9 @@ export function queueBlockPulse(event: BlockPulseEvent): void {
     q.push(event);
   }
   // Also push to a staging area for consumers that haven't registered yet
-  staging.push(event);
+  if (staging.length < 20) {
+    staging.push(event);
+  }
 }
 
 const staging: BlockPulseEvent[] = [];

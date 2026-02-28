@@ -30,10 +30,11 @@ export function WhaleEffects() {
     })),
   );
 
-  const planeGeo = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
+  const circleGeo = useMemo(() => new THREE.CircleGeometry(0.5, 64), []);
 
-  useFrame(() => {
+  useFrame((state) => {
     const pool = particlePoolRef.current;
+    const time = state.clock.elapsedTime;
 
     // Drain new whale events
     const events = drainWhaleEvents();
@@ -81,6 +82,7 @@ export function WhaleEffects() {
       // Update shader uniforms
       mat.uniforms.uColor.value.set(a.r, a.g, a.b);
       mat.uniforms.uIntensity.value = WHALE_CONFIG.glowMaxIntensity * p.whaleGlowIntensity;
+      mat.uniforms.uTime.value = time;
     });
   });
 
@@ -93,7 +95,7 @@ export function WhaleEffects() {
           visible={false}
         >
           <Billboard>
-            <mesh geometry={planeGeo}>
+            <mesh geometry={circleGeo}>
               <shaderMaterial
                 ref={(el) => { materials.current[i] = el; }}
                 vertexShader={whaleGlowVertexShader}
@@ -101,6 +103,7 @@ export function WhaleEffects() {
                 uniforms={{
                   uColor: { value: new THREE.Color(1, 1, 1) },
                   uIntensity: { value: 0 },
+                  uTime: { value: 0 },
                 }}
                 transparent
                 depthWrite={false}

@@ -17,41 +17,20 @@ export function AmbientField() {
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(STAR_COUNT * 3);
     const sizes = new Float32Array(STAR_COUNT);
-    // Store original chain-region association per star for focus dimming
-    const chainDists = new Float32Array(STAR_COUNT);
-
-    const chainCenters = Object.values(CHAINS).map((c) => c.center);
 
     for (let i = 0; i < STAR_COUNT; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const r = 5 + Math.random() * 20;
 
-      const x = r * Math.sin(phi) * Math.cos(theta);
-      const y = r * Math.sin(phi) * Math.sin(theta);
-      const z = r * Math.cos(phi);
-
-      positions[i * 3] = x;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = z;
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
       sizes[i] = 0.5 + Math.random() * 2;
-
-      // Find closest chain center
-      let minDist = Infinity;
-      for (const center of chainCenters) {
-        const dx = x - center[0];
-        const dy = y - center[1];
-        const dz = z - center[2];
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (d < minDist) minDist = d;
-      }
-      chainDists[i] = minDist;
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
-    // We'll store chain distances as custom data for JS-side dimming
-    (geo as any)._chainDists = chainDists;
 
     const mat = new THREE.ShaderMaterial({
       vertexShader: ambientVertexShader,

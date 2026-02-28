@@ -40,22 +40,39 @@ export const particleFragmentShader = /* glsl */ `
     if (dist > 1.0) discard;
 
     // Smooth radial falloff with energy-dependent sharpness
-    // High energy → sharper, more defined core; low energy → softer, diffused
     float sharpness = 1.2 + vEnergy * 0.5;
     float alpha = 1.0 - smoothstep(0.0, 1.0, dist);
     alpha = pow(alpha, sharpness);
 
     // Core glow: bright center that dims with energy
     float core = exp(-dist * (2.5 + (1.0 - vEnergy) * 2.0));
-    // Energy drives the core brightness multiplier
-    float coreMult = 2.0 + vEnergy * 1.5 + vIsWhale * 3.0;
+    float coreMult = 2.0 + vEnergy * 1.5;
     vec3 finalColor = vColor * (1.0 + core * coreMult);
 
-    // Subtle outer halo for whale particles
-    float halo = exp(-dist * dist * 1.5) * vIsWhale * 0.3;
-    alpha = alpha + halo;
+    if (vIsWhale > 0.5) {
+      // ── Whale-specific rendering ──
 
-    gl_FragColor = vec4(finalColor, alpha * vOpacity);
+      // Intense bright core with wider hot center
+      float whaleCore = exp(-dist * dist * 8.0);
+      finalColor += vColor * whaleCore * 4.0;
+
+      // Mid-range aura layer
+      float midGlow = exp(-dist * dist * 2.5);
+      finalColor += vColor * midGlow * 1.2;
+
+      // Wide soft atmospheric halo — fades to zero before edge
+      float halo = exp(-dist * dist * 1.8) * (1.0 - smoothstep(0.5, 0.95, dist));
+      alpha += halo * 0.25;
+
+      // Chromatic fringe
+      float edgeMask = 1.0 - smoothstep(0.4, 0.9, dist);
+      finalColor.r += exp(-dist * dist * 2.0) * vColor.r * 0.3 * edgeMask;
+      finalColor.b += exp(-dist * dist * 4.5) * vColor.b * 0.2 * edgeMask;
+    }
+
+    // Smooth fade to zero at the boundary — no hard cutoff
+    float edgeFade = 1.0 - smoothstep(0.7, 1.0, dist);
+    gl_FragColor = vec4(finalColor, alpha * vOpacity * edgeFade);
   }
 `;
 
@@ -71,15 +88,51 @@ export const whaleGlowVertexShader = /* glsl */ `
 export const whaleGlowFragmentShader = /* glsl */ `
   uniform vec3 uColor;
   uniform float uIntensity;
+  uniform float uTime;
 
   varying vec2 vUv;
 
   void main() {
-    float dist = length(vUv - 0.5) * 2.0;
-    float glow = exp(-dist * dist * 2.5);
-    float edge = 1.0 - smoothstep(0.7, 1.0, dist);
-    float alpha = glow * edge * uIntensity;
-    gl_FragColor = vec4(uColor, alpha);
+    vec2 uv = vUv - 0.5;
+    float dist = length(uv) * 2.0;
+
+    if (dist > 1.0) discard;
+
+    // Slow breathing distortion on the radius
+    float breath = 0.97 + 0.03 * sin(uTime * 1.1);
+    float d = dist / breath;
+
+    // ── Smooth edge fade — everything feathers to zero before boundary ──
+    float edgeFade = 1.0 - smoothstep(0.5, 1.0, dist);
+
+    // ── Multi-layer glow ──
+    float innerCore = exp(-d * d * 14.0);
+    float midAura   = exp(-d * d * 4.5);
+    float outerHaze = exp(-d * d * 2.2);
+
+    float glow = innerCore * 0.55 + midAura * 0.28 + outerHaze * 0.12;
+
+    // ── Chromatic shift ──
+    float chR = exp(-d * d * 3.5) * 0.28 + innerCore * 0.55;
+    float chG = glow;
+    float chB = exp(-d * d * 5.5) * 0.28 + innerCore * 0.55;
+
+    // ── Slow rotating caustic highlights ──
+    float angle = atan(uv.y, uv.x);
+    float caustic = 0.5 + 0.5 * sin(angle * 3.0 + uTime * 0.6);
+    caustic *= 0.5 + 0.5 * sin(angle * 5.0 - uTime * 0.35);
+    caustic *= exp(-d * d * 5.0) * 0.08;
+
+    vec3 col = vec3(
+      uColor.r * chR + caustic,
+      uColor.g * chG + caustic * 0.6,
+      uColor.b * chB + caustic * 0.4
+    );
+
+    float alpha = (glow + caustic) * uIntensity * edgeFade;
+    if (alpha < 0.001) discard;
+
+    gl_FragColor = vec4(col, alpha);
   }
 `;
 
@@ -96,25 +149,59 @@ export const blockPulseFragmentShader = /* glsl */ `
   uniform vec3 uColor;
   uniform float uProgress;
   uniform float uOpacity;
+  uniform float uTime;
 
   varying vec2 vUv;
 
   void main() {
-    float dist = length(vUv - 0.5) * 2.0;
+    vec2 uv = vUv - 0.5;
+    float dist = length(uv) * 2.0;
 
-    // Ring shape: bright at the expanding edge, transparent inside and outside
-    float ringWidth = 0.12;
-    float ringCenter = uProgress;
-    float ring = smoothstep(ringCenter - ringWidth, ringCenter, dist)
-               * (1.0 - smoothstep(ringCenter, ringCenter + ringWidth, dist));
+    if (dist > 1.0) discard;
 
-    // Soft inner glow
-    float innerGlow = exp(-dist * dist * 3.0) * (1.0 - uProgress) * 0.15;
+    // ── Smooth edge feather — fade to zero before geometry boundary ──
+    float edgeFade = 1.0 - smoothstep(0.88, 1.0, dist);
 
-    float alpha = (ring * 0.6 + innerGlow) * uOpacity;
+    // ── Primary ring: soft gaussian, leading edge ──
+    float ringDelta = dist - uProgress;
+    float primaryRing = exp(-ringDelta * ringDelta * 18.0);
+
+    // ── Secondary trailing ring: thinner, delayed ──
+    float trailPos = max(uProgress - 0.12, 0.0);
+    float trailDelta = dist - trailPos;
+    float trailRing = exp(-trailDelta * trailDelta * 35.0) * 0.35;
+
+    // ── Tertiary whisper ring: very faint, even further behind ──
+    float whisperPos = max(uProgress - 0.28, 0.0);
+    float whisperDelta = dist - whisperPos;
+    float whisperRing = exp(-whisperDelta * whisperDelta * 50.0) * 0.12;
+
+    // ── Inner nebula: diffuse fill that dissipates as wave expands ──
+    float innerFill = exp(-dist * dist * 3.0) * (1.0 - uProgress) * (1.0 - uProgress);
+
+    // ── Angular variation — subtle organic break of perfect symmetry ──
+    float angle = atan(uv.y, uv.x);
+    float wobble = 1.0 + 0.04 * sin(angle * 6.0 + uTime * 2.0)
+                       + 0.025 * sin(angle * 10.0 - uTime * 1.4);
+
+    // ── Combine layers ──
+    float ring = primaryRing * wobble * 0.4
+               + trailRing * 0.3
+               + whisperRing
+               + innerFill * 0.06;
+
+    // ── Chromatic depth ──
+    float chromaShift = primaryRing * 0.08;
+    vec3 col = vec3(
+      uColor.r + chromaShift * 0.5,
+      uColor.g + chromaShift * 0.3,
+      uColor.b + chromaShift
+    );
+
+    float alpha = ring * uOpacity * edgeFade;
     if (alpha < 0.001) discard;
 
-    gl_FragColor = vec4(uColor, alpha);
+    gl_FragColor = vec4(col, alpha);
   }
 `;
 

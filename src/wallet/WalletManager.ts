@@ -89,6 +89,7 @@ class WalletManager {
   }
 
   private setupListeners(): void {
+    this.removeListeners();
     const ethereum = (window as any).ethereum;
     if (!ethereum) return;
 

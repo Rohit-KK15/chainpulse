@@ -30,48 +30,73 @@ const TRACKED_TOKENS: Record<string, { address: string; symbol: string; decimals
   ],
 };
 
-export async function fetchPortfolio(walletAddress: string): Promise<TokenBalance[]> {
+const providerCache = new Map<string, JsonRpcProvider>();
+
+function getProvider(rpcUrl: string): JsonRpcProvider {
+  let provider = providerCache.get(rpcUrl);
+  if (!provider) {
+    provider = new JsonRpcProvider(rpcUrl);
+    providerCache.set(rpcUrl, provider);
+  }
+  return provider;
+}
+
+async function fetchChainBalances(chainId: string, walletAddress: string): Promise<TokenBalance[]> {
+  const chainConfig = CHAINS[chainId];
+  if (!chainConfig) return [];
+  const provider = getProvider(chainConfig.rpcHttp);
   const balances: TokenBalance[] = [];
 
-  for (const [chainId, chainConfig] of Object.entries(CHAINS)) {
-    const provider = new JsonRpcProvider(chainConfig.rpcHttp);
+  // Fetch native balance
+  try {
+    const nativeBalance = await provider.getBalance(walletAddress);
+    const formatted = parseFloat(formatUnits(nativeBalance, 18));
+    if (formatted > 0.0001) {
+      balances.push({
+        symbol: chainConfig.nativeCurrency,
+        balance: formatted,
+        chain: chainId,
+        color: chainConfig.color.primary,
+      });
+    }
+  } catch {
+    // Skip on error
+  }
 
-    // Fetch native balance
+  // Fetch tracked token balances
+  const tokens = TRACKED_TOKENS[chainId] ?? [];
+  for (const token of tokens) {
     try {
-      const nativeBalance = await provider.getBalance(walletAddress);
-      const formatted = parseFloat(formatUnits(nativeBalance, 18));
-      if (formatted > 0.0001) {
+      const contract = new Contract(token.address, ERC20_ABI, provider);
+      const raw = await contract.balanceOf(walletAddress);
+      const formatted = parseFloat(formatUnits(raw, token.decimals));
+      if (formatted > 0.01) {
         balances.push({
-          symbol: chainConfig.nativeCurrency,
+          symbol: token.symbol,
           balance: formatted,
           chain: chainId,
-          color: chainConfig.color.primary,
+          color: token.color,
         });
       }
     } catch {
       // Skip on error
     }
-
-    // Fetch tracked token balances
-    const tokens = TRACKED_TOKENS[chainId] ?? [];
-    for (const token of tokens) {
-      try {
-        const contract = new Contract(token.address, ERC20_ABI, provider);
-        const raw = await contract.balanceOf(walletAddress);
-        const formatted = parseFloat(formatUnits(raw, token.decimals));
-        if (formatted > 0.01) {
-          balances.push({
-            symbol: token.symbol,
-            balance: formatted,
-            chain: chainId,
-            color: token.color,
-          });
-        }
-      } catch {
-        // Skip on error
-      }
-    }
   }
 
+  return balances;
+}
+
+export async function fetchPortfolio(walletAddress: string): Promise<TokenBalance[]> {
+  const chainIds = Object.keys(CHAINS);
+  const results = await Promise.allSettled(
+    chainIds.map((chainId) => fetchChainBalances(chainId, walletAddress)),
+  );
+
+  const balances: TokenBalance[] = [];
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      balances.push(...result.value);
+    }
+  }
   return balances;
 }

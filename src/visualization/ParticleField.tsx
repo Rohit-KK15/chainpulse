@@ -102,6 +102,16 @@ export function ParticleField() {
     return { trailGeo: geo, trailMat: mat };
   }, [gl]);
 
+  // Dispose GPU resources on unmount
+  useEffect(() => {
+    return () => {
+      mainGeo.dispose();
+      mainMat.dispose();
+      trailGeo.dispose();
+      trailMat.dispose();
+    };
+  }, [mainGeo, mainMat, trailGeo, trailMat]);
+
   // Click/pointer handler for particle inspection
   const handlePointerDown = useCallback(
     (event: ThreeEvent<PointerEvent>) => {

@@ -100,7 +100,7 @@ export class SimulationProvider {
             from: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
             to: `0x${Math.random().toString(16).slice(2).padEnd(40, '0')}`,
             value: 0n,
-            gasPrice: BigInt(Math.floor((this.baseGas + (Math.random() - 0.3) * 10) * 1e9)),
+            gasPrice: (() => { const gp = BigInt(Math.floor((this.baseGas + (Math.random() - 0.3) * 10) * 1e9)); return gp < 0n ? 10000000000n : gp; })(),
             gasLimit: BigInt(Math.floor(Math.random() * 200000 + 50000)),
             blockNumber: Math.floor(Date.now() / (blockTime * 1000)),
             chainId: this.chainId,

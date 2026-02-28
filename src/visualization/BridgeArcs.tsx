@@ -72,20 +72,25 @@ export function BridgeArcs() {
 
       // Create animated tube — draw length based on age
       const drawLength = Math.min(arc.age / 0.5, 1); // fully drawn in 0.5s
-      const curve = new THREE.QuadraticBezierCurve3(arc.from, arc.control, arc.to);
 
-      // Dispose old geometry
-      if (geometriesRef.current[i]) {
-        geometriesRef.current[i].dispose();
+      // Only rebuild geometry while draw length is still changing
+      const needsRebuild = drawLength < 1 || !geometriesRef.current[i];
+      if (needsRebuild) {
+        const curve = new THREE.QuadraticBezierCurve3(arc.from, arc.control, arc.to);
+
+        // Dispose old geometry
+        if (geometriesRef.current[i]) {
+          geometriesRef.current[i].dispose();
+        }
+
+        const partialCurve = {
+          getPoint: (t: number) => curve.getPoint(t * drawLength),
+        } as THREE.Curve<THREE.Vector3>;
+
+        const geom = new THREE.TubeGeometry(partialCurve, ARC_SEGMENTS, arc.thickness, 6, false);
+        geometriesRef.current[i] = geom;
+        mesh.geometry = geom;
       }
-
-      const partialCurve = {
-        getPoint: (t: number) => curve.getPoint(t * drawLength),
-      } as THREE.Curve<THREE.Vector3>;
-
-      const geom = new THREE.TubeGeometry(partialCurve, ARC_SEGMENTS, arc.thickness, 6, false);
-      geometriesRef.current[i] = geom;
-      mesh.geometry = geom;
 
       const mat = mesh.material as THREE.MeshBasicMaterial;
       mat.color.copy(arc.color);

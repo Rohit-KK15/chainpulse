@@ -644,7 +644,7 @@ function WalletButton() {
   const [connecting, setConnecting] = useState(false);
 
   useEffect(() => {
-    walletManager.subscribe((state) => {
+    const unsub = walletManager.subscribe((state) => {
       if (state) {
         useStore.getState().setWalletState(state.address, state.chainId, state.balance);
       } else {
@@ -652,6 +652,7 @@ function WalletButton() {
       }
     });
     walletManager.tryAutoConnect();
+    return unsub;
   }, []);
 
   const handleClick = async () => {

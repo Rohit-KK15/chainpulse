@@ -11,6 +11,7 @@ export interface InspectedTx {
   timestamp: number;
   screenX: number;
   screenY: number;
+  tokenSymbol?: string;
 }
 
 export interface WhaleRecord {
@@ -18,6 +19,7 @@ export interface WhaleRecord {
   chainId: string;
   value: number;
   timestamp: number;
+  tokenSymbol?: string;
 }
 
 interface AppState {
@@ -31,8 +33,16 @@ interface AppState {
   transitioning: boolean;
   setTransitioning: (t: boolean) => void;
 
+  // Data initialization flag
+  initialized: boolean;
+  setInitialized: (v: boolean) => void;
+
   chainConnected: Record<string, boolean>;
   setChainConnected: (chainId: string, connected: boolean) => void;
+
+  // Tracks chains that fell back to simulation
+  chainFailed: Record<string, boolean>;
+  setChainFailed: (chainId: string, failed: boolean) => void;
 
   txCount: number;
   incrementTxCount: (n: number) => void;
@@ -54,6 +64,9 @@ interface AppState {
 
   inspectedTx: InspectedTx | null;
   setInspectedTx: (tx: InspectedTx | null) => void;
+
+  whaleThresholdUsd: number;
+  setWhaleThresholdUsd: (v: number) => void;
 }
 
 const MAX_RECENT_WHALES = 5;
@@ -62,7 +75,7 @@ const MAX_WHALE_HISTORY = 50;
 
 const STORAGE_KEY = 'chainpulse_prefs';
 
-function loadPrefs(): { isSimulation: boolean; whaleHistory: WhaleRecord[] } {
+function loadPrefs(): { isSimulation: boolean; whaleHistory: WhaleRecord[]; whaleThresholdUsd: number } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -70,17 +83,19 @@ function loadPrefs(): { isSimulation: boolean; whaleHistory: WhaleRecord[] } {
       return {
         isSimulation: parsed.isSimulation ?? true,
         whaleHistory: Array.isArray(parsed.whaleHistory) ? parsed.whaleHistory.slice(0, MAX_WHALE_HISTORY) : [],
+        whaleThresholdUsd: typeof parsed.whaleThresholdUsd === 'number' ? parsed.whaleThresholdUsd : 0,
       };
     }
   } catch { /* ignore */ }
-  return { isSimulation: true, whaleHistory: [] };
+  return { isSimulation: true, whaleHistory: [], whaleThresholdUsd: 0 };
 }
 
-function savePrefs(state: { isSimulation: boolean; whaleHistory: WhaleRecord[] }): void {
+function savePrefs(state: { isSimulation: boolean; whaleHistory: WhaleRecord[]; whaleThresholdUsd: number }): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       isSimulation: state.isSimulation,
       whaleHistory: state.whaleHistory,
+      whaleThresholdUsd: state.whaleThresholdUsd,
     }));
   } catch { /* ignore */ }
 }
@@ -94,16 +109,25 @@ export const useStore = create<AppState>((set, get) => ({
   isSimulation: prefs.isSimulation,
   setSimulation: (sim) => {
     set({ isSimulation: sim });
-    savePrefs({ isSimulation: sim, whaleHistory: get().whaleHistory });
+    savePrefs({ isSimulation: sim, whaleHistory: get().whaleHistory, whaleThresholdUsd: get().whaleThresholdUsd });
   },
 
   transitioning: false,
   setTransitioning: (t) => set({ transitioning: t }),
 
+  initialized: false,
+  setInitialized: (v) => set({ initialized: v }),
+
   chainConnected: {},
   setChainConnected: (chainId, connected) =>
     set((s) => ({
       chainConnected: { ...s.chainConnected, [chainId]: connected },
+    })),
+
+  chainFailed: {},
+  setChainFailed: (chainId, failed) =>
+    set((s) => ({
+      chainFailed: { ...s.chainFailed, [chainId]: failed },
     })),
 
   txCount: 0,
@@ -120,7 +144,9 @@ export const useStore = create<AppState>((set, get) => ({
   avgGas: 0,
   addGasPrices: (prices) =>
     set((s) => {
-      const updated = [...s.gasPrices, ...prices].slice(-MAX_GAS_SAMPLES);
+      const valid = prices.filter((p) => Number.isFinite(p));
+      if (valid.length === 0) return s;
+      const updated = [...s.gasPrices, ...valid].slice(-MAX_GAS_SAMPLES);
       const avg = updated.length > 0
         ? updated.reduce((a, b) => a + b, 0) / updated.length
         : 0;
@@ -135,9 +161,10 @@ export const useStore = create<AppState>((set, get) => ({
         chainId: tx.chainId,
         value: tx.value,
         timestamp: tx.timestamp,
+        tokenSymbol: tx.tokenInfo?.symbol,
       };
       const history = [record, ...s.whaleHistory].slice(0, MAX_WHALE_HISTORY);
-      savePrefs({ isSimulation: get().isSimulation, whaleHistory: history });
+      savePrefs({ isSimulation: get().isSimulation, whaleHistory: history, whaleThresholdUsd: get().whaleThresholdUsd });
       return {
         recentWhales: [tx, ...s.recentWhales].slice(0, MAX_RECENT_WHALES),
         whaleHistory: history,
@@ -149,4 +176,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   inspectedTx: null,
   setInspectedTx: (tx) => set({ inspectedTx: tx }),
+
+  whaleThresholdUsd: prefs.whaleThresholdUsd,
+  setWhaleThresholdUsd: (v) => {
+    set({ whaleThresholdUsd: v });
+    savePrefs({ isSimulation: get().isSimulation, whaleHistory: get().whaleHistory, whaleThresholdUsd: v });
+  },
 }));

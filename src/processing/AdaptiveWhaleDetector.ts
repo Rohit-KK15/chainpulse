@@ -1,4 +1,8 @@
 import { CHAINS } from '../config/chains';
+import { getTokenWhaleThreshold } from '../config/tokenRegistry';
+import { useStore } from '../stores/useStore';
+
+const STABLECOIN_SYMBOLS = new Set(['USDT', 'USDC', 'DAI']);
 
 const WINDOW_SIZE = 200;
 const COOLDOWN_MS = 3000;
@@ -41,10 +45,19 @@ class AdaptiveWhaleDetectorImpl {
     state.sortDirty = true;
   }
 
-  getThreshold(chainId: string): number {
-    const staticThreshold = CHAINS[chainId]?.whaleThreshold ?? 5;
-    const state = this.chains.get(chainId);
-    if (!state || state.fill < 20) return staticThreshold;
+  getThreshold(key: string): number {
+    // Key may be "chainId" or "chainId:symbol" for token transfers
+    const parts = key.split(':');
+    const chainId = parts[0];
+    const tokenSymbol = parts[1];
+    let staticThreshold: number;
+    if (tokenSymbol) {
+      staticThreshold = getTokenWhaleThreshold(chainId, tokenSymbol) ?? 5;
+    } else {
+      staticThreshold = CHAINS[chainId]?.whaleThreshold ?? 5;
+    }
+    const state = this.chains.get(key);
+    if (!state || state.fill < 20) return this.applyUserFloor(staticThreshold, chainId, tokenSymbol);
 
     // Lazily sort for percentile calculation
     if (state.sortDirty) {
@@ -56,7 +69,23 @@ class AdaptiveWhaleDetectorImpl {
     const p95Value = state.sorted[Math.min(p95Index, state.sorted.length - 1)];
     const adaptiveThreshold = p95Value * PERCENTILE_MULTIPLIER;
 
-    return Math.max(staticThreshold, adaptiveThreshold);
+    return this.applyUserFloor(Math.max(staticThreshold, adaptiveThreshold), chainId, tokenSymbol);
+  }
+
+  /** Apply user-set USD whale threshold as a floor.
+   *  For stablecoins: USD value ≈ face value, so threshold applies directly.
+   *  For non-stablecoins / native: no price feed, threshold left unchanged. */
+  private applyUserFloor(threshold: number, _chainId: string, tokenSymbol?: string): number {
+    const userUsd = useStore.getState().whaleThresholdUsd;
+    if (userUsd <= 0) return threshold;
+
+    if (tokenSymbol && STABLECOIN_SYMBOLS.has(tokenSymbol)) {
+      // 1 token ≈ $1, so USD threshold maps directly to token amount
+      return Math.max(threshold, userUsd);
+    }
+
+    // Native currency / non-stablecoin: no price feed, keep existing threshold
+    return threshold;
   }
 
   isWhale(chainId: string, valueInToken: number): boolean {

@@ -2,6 +2,30 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore, InspectedTx } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 
+// ── Clipboard helper ───────────────────────────
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fallback for older browsers / insecure contexts
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
 // ── Icons ──────────────────────────────────────
 
 function CopyIcon() {
@@ -21,6 +45,16 @@ function CheckIcon() {
   );
 }
 
+function ExternalLinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
+
 // ── Copyable field ─────────────────────────────
 
 function CopyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
@@ -31,10 +65,12 @@ function CopyField({ label, value, mono }: { label: string; value: string; mono?
       <span className={`detail-value ${mono ? 'mono' : ''}`}>{value}</span>
       <button
         className="whale-copy"
-        onClick={() => {
-          navigator.clipboard.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
+        onClick={async () => {
+          const ok = await copyToClipboard(value);
+          if (ok) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          }
         }}
       >
         {copied ? <CheckIcon /> : <CopyIcon />}
@@ -49,10 +85,12 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   const chain = CHAINS[tx.chainId];
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Position the panel near the click, clamped to viewport
+  // Position the panel near the click, clamped to viewport using visualViewport
+  const vw = window.visualViewport?.width ?? document.documentElement.clientWidth;
+  const vh = window.visualViewport?.height ?? document.documentElement.clientHeight;
   const style: React.CSSProperties = {
-    left: Math.min(tx.screenX + 12, window.innerWidth - 320),
-    top: Math.min(tx.screenY - 20, window.innerHeight - 280),
+    left: Math.max(0, Math.min(tx.screenX + 12, vw - 320)),
+    top: Math.max(0, Math.min(tx.screenY - 20, vh - 280)),
   };
 
   // Close on outside click
@@ -74,6 +112,10 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
+
+  const safeValue = Number.isFinite(tx.value) ? tx.value.toFixed(4) : '0';
+  const safeGas = Number.isFinite(tx.gasPrice) ? tx.gasPrice.toFixed(1) : '0';
+  const valueUnit = tx.tokenSymbol ?? chain?.nativeCurrency ?? '';
 
   return (
     <div
@@ -98,11 +140,11 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
       />
       <div className="detail-row">
         <span className="detail-label">Value</span>
-        <span className="detail-value">{tx.value.toFixed(4)} {chain?.nativeCurrency}</span>
+        <span className="detail-value">{safeValue} {valueUnit}</span>
       </div>
       <div className="detail-row">
         <span className="detail-label">Gas</span>
-        <span className="detail-value">{tx.gasPrice.toFixed(1)} gwei</span>
+        <span className="detail-value">{safeGas} gwei</span>
       </div>
     </div>
   );
@@ -112,14 +154,16 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
 
 function ConnectionToast() {
   const chainConnected = useStore((s) => s.chainConnected);
+  const chainFailed = useStore((s) => s.chainFailed);
   const isSimulation = useStore((s) => s.isSimulation);
 
   if (isSimulation) return null;
 
   const chains = Object.values(CHAINS);
   const disconnected = chains.filter((c) => chainConnected[c.id] === false);
+  const failed = chains.filter((c) => chainFailed[c.id] === true && chainConnected[c.id] === true);
 
-  if (disconnected.length === 0) return null;
+  if (disconnected.length === 0 && failed.length === 0) return null;
 
   return (
     <div className="connection-toast">
@@ -132,6 +176,28 @@ function ConnectionToast() {
           <span>Connecting to {chain.name}...</span>
         </div>
       ))}
+      {failed.map((chain) => (
+        <div key={`${chain.id}-failed`} className="toast-item toast-item--fallback">
+          <span
+            className="toast-dot"
+            style={{ background: chain.color.primary, opacity: 0.5 }}
+          />
+          <span>{chain.name}: using simulation</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Loading Indicator ──────────────────────────
+
+function LoadingIndicator() {
+  const initialized = useStore((s) => s.initialized);
+  if (initialized) return null;
+  return (
+    <div className="loading-indicator">
+      <div className="loading-pulse" />
+      <span>Connecting to chains...</span>
     </div>
   );
 }
@@ -157,6 +223,8 @@ function StatsStrip() {
     return () => clearInterval(id);
   }, []);
 
+  const safeAvgGas = Number.isFinite(avgGas) ? avgGas.toFixed(0) : '0';
+
   return (
     <div className="stats-strip">
       <div className="stat">
@@ -164,7 +232,7 @@ function StatsStrip() {
         <span className="stat-label">TX/S</span>
       </div>
       <div className="stat">
-        <span className="stat-value">{avgGas.toFixed(0)}</span>
+        <span className="stat-value">{safeAvgGas}</span>
         <span className="stat-label">GWEI</span>
       </div>
       <div className="stat">
@@ -175,13 +243,17 @@ function StatsStrip() {
       {Object.values(CHAINS).map((chain) => {
         const block = latestBlocks[chain.id];
         const connected = chainConnected[chain.id];
+        const statusLabel = connected ? `${chain.name}: connected` : `${chain.name}: disconnected`;
         return (
           <div key={chain.id} className="stat chain-stat">
             <span
               className={`status-dot ${connected ? 'connected' : ''}`}
               style={{ background: connected ? chain.color.primary : undefined }}
+              role="status"
+              aria-label={statusLabel}
+              title={statusLabel}
             />
-            <span className="stat-label">{chain.name.slice(0, 3).toUpperCase()}</span>
+            <span className="stat-label">{chain.abbr}</span>
             {block ? (
               <span className="stat-block">#{block.toLocaleString()}</span>
             ) : (
@@ -194,22 +266,224 @@ function StatsStrip() {
   );
 }
 
+// ── Mode Toggle ────────────────────────────────
+
+function ModeToggle() {
+  const isSimulation = useStore((s) => s.isSimulation);
+  const setSimulation = useStore((s) => s.setSimulation);
+  const [confirming, setConfirming] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleClick = () => {
+    if (confirming) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setConfirming(false);
+      setSimulation(!isSimulation);
+    } else {
+      setConfirming(true);
+      timerRef.current = setTimeout(() => setConfirming(false), 2000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  return (
+    <button
+      className={`mode-toggle ${confirming ? 'mode-toggle--confirm' : ''}`}
+      onClick={handleClick}
+    >
+      {confirming
+        ? 'Click to confirm'
+        : isSimulation
+          ? 'Go Live'
+          : 'Simulate'}
+    </button>
+  );
+}
+
+// ── Info / Legend Panel ────────────────────────
+
+const CHAIN_LEGEND = Object.values(CHAINS).map((c) => ({
+  name: c.name,
+  color: c.color.primary,
+}));
+
+const TOKEN_LEGEND = [
+  { symbol: 'USDC', color: '#2775CA' },
+  { symbol: 'USDT', color: '#26A17B' },
+  { symbol: 'DAI', color: '#F5AC37' },
+  { symbol: 'WETH', color: '#EC1C79' },
+  { symbol: 'WBTC', color: '#F7931A' },
+];
+
+const SLIDER_MIN = 1_000;
+const SLIDER_MAX = 1_000_000;
+
+function logToLinear(value: number): number {
+  const minLog = Math.log10(SLIDER_MIN);
+  const maxLog = Math.log10(SLIDER_MAX);
+  return (Math.log10(value) - minLog) / (maxLog - minLog);
+}
+
+function linearToLog(t: number): number {
+  const minLog = Math.log10(SLIDER_MIN);
+  const maxLog = Math.log10(SLIDER_MAX);
+  return Math.round(Math.pow(10, minLog + t * (maxLog - minLog)));
+}
+
+function formatUsd(value: number): string {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toLocaleString()}`;
+}
+
+function InfoButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="info-btn" onClick={onClick} aria-label="Show legend">
+      i
+    </button>
+  );
+}
+
+function InfoPanel({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
+  const setWhaleThresholdUsd = useStore((s) => s.setWhaleThresholdUsd);
+
+  const sliderValue = whaleThresholdUsd > 0 ? logToLinear(whaleThresholdUsd) : 0;
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        // Ignore clicks on the info button itself
+        if ((e.target as HTMLElement).closest('.info-btn')) return;
+        onClose();
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div ref={panelRef} className="info-panel">
+      <div className="info-panel-header">
+        <span>Legend</span>
+        <button className="detail-close" onClick={onClose}>x</button>
+      </div>
+
+      <div className="info-section">
+        <div className="info-row">
+          <span className="info-icon info-dot" />
+          <span>Each particle is a transaction — size = value</span>
+        </div>
+
+        <div className="info-row info-sub">
+          {CHAIN_LEGEND.map((c) => (
+            <span key={c.name} className="info-chip">
+              <span className="info-dot" style={{ background: c.color }} />
+              {c.name}
+            </span>
+          ))}
+        </div>
+
+        <div className="info-row">
+          <span className="info-icon info-token-swatch" />
+          <span>Token transfers colored by token</span>
+        </div>
+
+        <div className="info-row info-sub">
+          {TOKEN_LEGEND.map((t) => (
+            <span key={t.symbol} className="info-chip">
+              <span className="info-dot" style={{ background: t.color }} />
+              {t.symbol}
+            </span>
+          ))}
+        </div>
+
+        <div className="info-row">
+          <span className="info-icon">🐋</span>
+          <span>Large glowing particles = high-value whale txns</span>
+        </div>
+
+        <div className="info-row">
+          <span className="info-icon info-ring" />
+          <span>Expanding rings = new blocks arriving</span>
+        </div>
+
+        <div className="info-row">
+          <span className="info-icon">👆</span>
+          <span>Click any particle to inspect tx details</span>
+        </div>
+      </div>
+
+      <div className="info-divider" />
+
+      <div className="info-section">
+        <div className="info-slider-header">
+          <span>Whale Threshold</span>
+          <span className="info-slider-value">
+            {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
+          </span>
+        </div>
+        <div className="info-slider-note">Applies to stablecoins (USDC, USDT, DAI)</div>
+        <input
+          type="range"
+          className="info-slider"
+          min={0}
+          max={1}
+          step={0.001}
+          value={sliderValue}
+          onChange={(e) => {
+            const t = parseFloat(e.target.value);
+            setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
+          }}
+        />
+        <div className="info-slider-labels">
+          <span>Auto</span>
+          <span>$10K</span>
+          <span>$100K</span>
+          <span>$1M</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Overlay ───────────────────────────────
 
 export function Overlay() {
   const focusedChain = useStore((s) => s.focusedChain);
   const setFocusedChain = useStore((s) => s.setFocusedChain);
-  const isSimulation = useStore((s) => s.isSimulation);
-  const setSimulation = useStore((s) => s.setSimulation);
   const txCount = useStore((s) => s.txCount);
   const recentWhales = useStore((s) => s.recentWhales);
   const inspectedTx = useStore((s) => s.inspectedTx);
   const transitioning = useStore((s) => s.transitioning);
-
-  const [copiedHash, setCopiedHash] = useState<string | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const handleCloseDetail = useCallback(() => {
     useStore.getState().setInspectedTx(null);
+  }, []);
+
+  const handleToggleInfo = useCallback(() => {
+    setInfoOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseInfo = useCallback(() => {
+    setInfoOpen(false);
   }, []);
 
   return (
@@ -219,6 +493,9 @@ export function Overlay() {
 
       {/* Connection toast */}
       <ConnectionToast />
+
+      {/* Loading indicator */}
+      <LoadingIndicator />
 
       {/* Header */}
       <div className="overlay-header">
@@ -266,41 +543,28 @@ export function Overlay() {
             <span className="hud-label">Total TX</span>
             <span className="hud-value">{txCount.toLocaleString()}</span>
           </div>
-          <button
-            className="mode-toggle"
-            onClick={() => setSimulation(!isSimulation)}
-          >
-            {isSimulation ? 'Go Live' : 'Simulate'}
-          </button>
+          <ModeToggle />
+          <InfoButton onClick={handleToggleInfo} />
+          {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 
         <div className="whale-alerts">
           {recentWhales.map((whale) => (
-            <div
+            <a
               key={whale.hash}
               className="whale-alert"
+              href={`${CHAINS[whale.chainId]?.explorerTx ?? 'https://etherscan.io/tx/'}${whale.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
                 '--chain-color': CHAINS[whale.chainId]?.color.primary ?? '#fff',
               } as React.CSSProperties}
             >
               <span className="whale-emoji">🐋</span>
               <span className="whale-value">
-                {whale.value.toFixed(2)} {CHAINS[whale.chainId]?.nativeCurrency}
+                {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? CHAINS[whale.chainId]?.nativeCurrency}
               </span>
-              <span className="whale-hash">
-                {whale.hash.slice(0, 10)}...{whale.hash.slice(-4)}
-              </span>
-              <button
-                className="whale-copy"
-                onClick={() => {
-                  navigator.clipboard.writeText(whale.hash);
-                  setCopiedHash(whale.hash);
-                  setTimeout(() => setCopiedHash(null), 1500);
-                }}
-              >
-                {copiedHash === whale.hash ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </div>
+            </a>
           ))}
         </div>
       </div>

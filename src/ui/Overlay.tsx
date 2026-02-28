@@ -6,9 +6,7 @@ import { useENSName } from '../utils/ensCache';
 import { soundEngine } from '../audio/SoundEngine';
 import { fetchPortfolio } from '../wallet/PortfolioTracker';
 import { sceneCanvas } from '../visualization/Scene';
-import { fetchAllChainHistory } from '../wallet/HistoryFetcher';
 import { fetchPrices, formatUsdValue } from '../data/PriceFeed';
-import { replayBuffer, ReplaySpeed } from '../data/ReplayBuffer';
 
 // ── Clipboard helper ───────────────────────────
 
@@ -752,42 +750,56 @@ const WHALE_EXIT_MS = 450;
 
 function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/types').ProcessedTransaction[] }) {
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [exiting, setExiting] = useState<import('../data/types').ProcessedTransaction[]>([]);
+  const [exitItem, setExitItem] = useState<import('../data/types').ProcessedTransaction | null>(null);
   const prevRef = useRef<import('../data/types').ProcessedTransaction[]>([]);
+  const enteringHashRef = useRef<string | null>(null);
+
+  const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
 
   useEffect(() => {
     const prev = prevRef.current;
-    const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
-    const visibleHashes = new Set(visible.map((w) => w.hash));
+    const currentHashes = new Set(visible.map((w) => w.hash));
 
-    // Detect items that fell off the visible list
-    const removed = prev.filter((w) => !visibleHashes.has(w.hash));
+    // Detect the new item entering at the top
+    if (visible.length > 0 && (prev.length === 0 || prev[0].hash !== visible[0].hash)) {
+      enteringHashRef.current = visible[0].hash;
+    }
 
-    if (removed.length > 0) {
-      const removedHashes = removed.map((w) => w.hash);
-      setExiting((prev) => [...prev, ...removed]);
-      setTimeout(() => {
-        setExiting((prev) => prev.filter((w) => !removedHashes.includes(w.hash)));
-      }, WHALE_EXIT_MS);
+    // Detect the item that fell off — keep the actual tx object for rendering
+    const removed = prev.find((w) => !currentHashes.has(w.hash));
+    if (removed) {
+      setExitItem(removed);
+      const timer = setTimeout(() => setExitItem(null), WHALE_EXIT_MS);
+      prevRef.current = visible;
+      return () => clearTimeout(timer);
     }
 
     prevRef.current = visible;
   }, [recentWhales]);
 
-  const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
-  const exitHashes = new Set(exiting.map((w) => w.hash));
-  const displayList = [...visible, ...exiting];
+  // Build display: visible items + the exiting item appended at the bottom
+  const displayList = exitItem
+    ? [...visible, exitItem]
+    : visible;
 
   return (
     <div className="whale-alerts-container">
       <div className="whale-alerts">
-        {displayList.map((whale) => {
+        {displayList.map((whale, i) => {
           const chain = CHAINS[whale.chainId];
-          const isExit = exitHashes.has(whale.hash);
+          const isEntering = whale.hash === enteringHashRef.current && i === 0;
+          const isExit = exitItem !== null && whale.hash === exitItem.hash;
           return (
             <div
               key={whale.hash}
-              className={`whale-alert-wrap${isExit ? ' whale-alert-wrap--exit' : ''}`}
+              className={[
+                'whale-alert-wrap',
+                isEntering ? 'whale-alert-wrap--enter' : '',
+                isExit ? 'whale-alert-wrap--exit' : '',
+              ].filter(Boolean).join(' ')}
+              onAnimationEnd={() => {
+                if (isEntering) enteringHashRef.current = null;
+              }}
             >
               <a
                 className="whale-alert"
@@ -1092,120 +1104,6 @@ function AudioToggle() {
   );
 }
 
-// ── Replay Timeline ──────────────────────────
-
-function ReplayTimeline() {
-  const isWalletConnected = useStore((s) => s.isWalletConnected);
-  const walletAddress = useStore((s) => s.walletAddress);
-  const replayMode = useStore((s) => s.replayMode);
-  const replayLoading = useStore((s) => s.replayLoading);
-  const replayCursor = useStore((s) => s.replayCursor);
-  const replayTotal = useStore((s) => s.replayTotal);
-  const [speed, setSpeed] = useState<ReplaySpeed>(5);
-  const [playing, setPlaying] = useState(false);
-
-  useEffect(() => {
-    replayBuffer.setOnProgress((cursor, total) => {
-      useStore.getState().setReplayProgress(cursor, total);
-      if (cursor >= total && total > 0) setPlaying(false);
-    });
-  }, []);
-
-  const startReplay = async () => {
-    if (!walletAddress) return;
-    const store = useStore.getState();
-    store.setReplayLoading(true);
-    store.setReplayMode(true);
-
-    const txs = await fetchAllChainHistory(walletAddress);
-    store.setReplayLoading(false);
-
-    if (txs.length === 0) {
-      store.setReplayMode(false);
-      return;
-    }
-
-    replayBuffer.load(txs);
-    store.setReplayProgress(0, txs.length);
-    replayBuffer.setSpeed(speed);
-    replayBuffer.play();
-    setPlaying(true);
-  };
-
-  const stopReplay = () => {
-    replayBuffer.stop();
-    setPlaying(false);
-    useStore.getState().setReplayMode(false);
-    useStore.getState().setReplayProgress(0, 0);
-  };
-
-  const togglePlay = () => {
-    if (playing) {
-      replayBuffer.pause();
-      setPlaying(false);
-    } else {
-      replayBuffer.setSpeed(speed);
-      replayBuffer.play();
-      setPlaying(true);
-    }
-  };
-
-  const handleSpeedChange = (s: ReplaySpeed) => {
-    setSpeed(s);
-    replayBuffer.setSpeed(s);
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const pos = parseInt(e.target.value, 10);
-    replayBuffer.seek(pos);
-  };
-
-  if (!isWalletConnected) return null;
-
-  if (!replayMode) {
-    return (
-      <button className="replay-start-btn" onClick={startReplay} disabled={replayLoading}>
-        {replayLoading ? 'Loading...' : 'Replay History'}
-      </button>
-    );
-  }
-
-  const progress = replayTotal > 0 ? Math.round((replayCursor / replayTotal) * 100) : 0;
-
-  return (
-    <div className="replay-timeline">
-      <div className="replay-controls">
-        <button className="replay-btn" onClick={togglePlay} title={playing ? 'Pause' : 'Play'}>
-          {playing ? '⏸' : '▶'}
-        </button>
-        <button className="replay-btn" onClick={stopReplay} title="Stop">⏹</button>
-        <div className="replay-speed">
-          {([1, 5, 20] as ReplaySpeed[]).map((s) => (
-            <button
-              key={s}
-              className={`replay-speed-btn ${speed === s ? 'active' : ''}`}
-              onClick={() => handleSpeedChange(s)}
-            >
-              {s}x
-            </button>
-          ))}
-        </div>
-        <span className="replay-progress">{progress}%</span>
-      </div>
-      <input
-        type="range"
-        className="replay-scrubber"
-        min={0}
-        max={replayTotal}
-        value={replayCursor}
-        onChange={handleSeek}
-      />
-      <div className="replay-info">
-        <span>{replayCursor.toLocaleString()} / {replayTotal.toLocaleString()} txns</span>
-      </div>
-    </div>
-  );
-}
 
 // ── Screenshot Button + Modal ─────────────────
 
@@ -1438,9 +1336,6 @@ export function Overlay() {
 
         <WhaleAlertsPanel recentWhales={recentWhales} />
       </div>
-
-      {/* Replay timeline */}
-      <ReplayTimeline />
 
       {/* Tx detail panel */}
       {inspectedTx && (

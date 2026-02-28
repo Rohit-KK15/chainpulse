@@ -76,7 +76,7 @@ export function BlockPulse() {
       group.visible = true;
       group.position.set(p.cx, p.cy, p.cz);
 
-      // Scale: ring uses inner 70% of UV space; 1.45x world scale compensates
+      // Scale: continuous expansion (no contraction)
       const easeProgress = 1 - Math.pow(1 - progress, 2);
       const radius = PULSE_MAX_RADIUS * 1.45 * easeProgress;
       group.scale.setScalar(radius);

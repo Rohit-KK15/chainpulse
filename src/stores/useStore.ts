@@ -107,14 +107,6 @@ interface AppState {
   tokenPrices: Record<string, number>;
   setTokenPrices: (prices: Record<string, number>) => void;
 
-  // Replay
-  replayMode: boolean;
-  replayLoading: boolean;
-  replayCursor: number;
-  replayTotal: number;
-  setReplayMode: (v: boolean) => void;
-  setReplayLoading: (v: boolean) => void;
-  setReplayProgress: (cursor: number, total: number) => void;
 }
 
 const MAX_RECENT_WHALES = 6;
@@ -241,8 +233,9 @@ export const useStore = create<AppState>((set, get) => ({
       };
       const history = [record, ...s.whaleHistory].slice(0, MAX_WHALE_HISTORY);
       savePrefs({ isSimulation: get().isSimulation, whaleHistory: history, whaleThresholdUsd: get().whaleThresholdUsd });
+      const dedupedWhales = s.recentWhales.filter((w) => w.hash !== tx.hash);
       return {
-        recentWhales: [tx, ...s.recentWhales].slice(0, MAX_RECENT_WHALES),
+        recentWhales: [tx, ...dedupedWhales].slice(0, MAX_RECENT_WHALES),
         whaleHistory: history,
       };
     }),
@@ -297,12 +290,4 @@ export const useStore = create<AppState>((set, get) => ({
   tokenPrices: {},
   setTokenPrices: (prices) => set({ tokenPrices: prices }),
 
-  // Replay
-  replayMode: false,
-  replayLoading: false,
-  replayCursor: 0,
-  replayTotal: 0,
-  setReplayMode: (v) => set({ replayMode: v }),
-  setReplayLoading: (v) => set({ replayLoading: v }),
-  setReplayProgress: (cursor, total) => set({ replayCursor: cursor, replayTotal: total }),
 }));

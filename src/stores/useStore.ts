@@ -9,9 +9,11 @@ export interface InspectedTx {
   gasPrice: number;
   chainId: string;
   timestamp: number;
+  blockNumber: number;
   screenX: number;
   screenY: number;
   tokenSymbol?: string;
+  isStablecoin?: boolean;
 }
 
 export interface WhaleRecord {
@@ -20,6 +22,8 @@ export interface WhaleRecord {
   value: number;
   timestamp: number;
   tokenSymbol?: string;
+  from: string;
+  to: string | null;
 }
 
 interface AppState {
@@ -162,6 +166,8 @@ export const useStore = create<AppState>((set, get) => ({
         value: tx.value,
         timestamp: tx.timestamp,
         tokenSymbol: tx.tokenInfo?.symbol,
+        from: tx.from,
+        to: tx.to,
       };
       const history = [record, ...s.whaleHistory].slice(0, MAX_WHALE_HISTORY);
       savePrefs({ isSimulation: get().isSimulation, whaleHistory: history, whaleThresholdUsd: get().whaleThresholdUsd });

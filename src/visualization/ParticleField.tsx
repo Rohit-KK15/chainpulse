@@ -114,9 +114,11 @@ export function ParticleField() {
             gasPrice: p.gasPrice,
             chainId: p.chainId,
             timestamp: p.timestamp,
+            blockNumber: p.blockNumber,
             screenX: event.clientX ?? event.nativeEvent.clientX,
             screenY: event.clientY ?? event.nativeEvent.clientY,
             tokenSymbol: p.tokenSymbol || undefined,
+            isStablecoin: p.isStablecoin || undefined,
           });
           event.stopPropagation();
           return;
@@ -153,9 +155,11 @@ export function ParticleField() {
           gasPrice: p.gasPrice,
           chainId: p.chainId,
           timestamp: p.timestamp,
+          blockNumber: p.blockNumber,
           screenX: event.clientX ?? event.nativeEvent.clientX,
           screenY: event.clientY ?? event.nativeEvent.clientY,
           tokenSymbol: p.tokenSymbol || undefined,
+          isStablecoin: p.isStablecoin || undefined,
         });
       } else {
         useStore.getState().setInspectedTx(null);
@@ -225,8 +229,10 @@ export function ParticleField() {
         value: tx.value,
         whaleValue,
         gasPrice: tx.gasPrice,
+        blockNumber: tx.blockNumber,
         timestamp: tx.timestamp,
         tokenSymbol: tx.tokenInfo?.symbol ?? '',
+        isStablecoin: tx.tokenInfo?.isStablecoin ?? false,
       });
 
       // Value spectrum: modulate initial energy by transaction intensity

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore, InspectedTx } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 
@@ -55,6 +55,16 @@ function ExternalLinkIcon() {
   );
 }
 
+// ── Gas formatting ────────────────────────────
+
+function formatGwei(gwei: number): string {
+  if (!Number.isFinite(gwei) || gwei <= 0) return '0';
+  if (gwei < 0.01) return '<0.01';
+  if (gwei < 1) return gwei.toFixed(3);
+  if (gwei < 10) return gwei.toFixed(1);
+  return Math.round(gwei).toString();
+}
+
 // ── Copyable field ─────────────────────────────
 
 function CopyField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
@@ -79,6 +89,17 @@ function CopyField({ label, value, mono }: { label: string; value: string; mono?
   );
 }
 
+// ── Time formatting ───────────────────────────
+
+function formatRelativeTime(timestamp: number): string {
+  const diff = Math.floor(Date.now() / 1000 - timestamp);
+  if (diff < 5) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 // ── Tx Detail Panel ────────────────────────────
 
 function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
@@ -90,7 +111,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   const vh = window.visualViewport?.height ?? document.documentElement.clientHeight;
   const style: React.CSSProperties = {
     left: Math.max(0, Math.min(tx.screenX + 12, vw - 320)),
-    top: Math.max(0, Math.min(tx.screenY - 20, vh - 280)),
+    top: Math.max(0, Math.min(tx.screenY - 20, vh - 400)),
   };
 
   // Close on outside click
@@ -114,8 +135,9 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   }, [onClose]);
 
   const safeValue = Number.isFinite(tx.value) ? tx.value.toFixed(4) : '0';
-  const safeGas = Number.isFinite(tx.gasPrice) ? tx.gasPrice.toFixed(1) : '0';
+  const safeGas = formatGwei(tx.gasPrice);
   const valueUnit = tx.tokenSymbol ?? chain?.nativeCurrency ?? '';
+  const explorerUrl = `${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${tx.hash}`;
 
   return (
     <div
@@ -129,6 +151,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
       <div className="detail-header">
         <span className="detail-chain-dot" style={{ background: chain?.color.primary }} />
         <span className="detail-chain-name">{chain?.name ?? tx.chainId}</span>
+        <span className="detail-time">{formatRelativeTime(tx.timestamp)}</span>
         <button className="detail-close" onClick={onClose}>x</button>
       </div>
       <CopyField label="Hash" value={tx.hash} mono />
@@ -140,11 +163,30 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
       />
       <div className="detail-row">
         <span className="detail-label">Value</span>
-        <span className="detail-value">{safeValue} {valueUnit}</span>
+        <span className="detail-value">
+          {safeValue} {valueUnit}
+          {tx.isStablecoin && <span className="detail-badge">Stablecoin</span>}
+        </span>
       </div>
+      {tx.blockNumber > 0 && (
+        <div className="detail-row">
+          <span className="detail-label">Block</span>
+          <span className="detail-value">#{tx.blockNumber.toLocaleString()}</span>
+        </div>
+      )}
       <div className="detail-row">
         <span className="detail-label">Gas</span>
         <span className="detail-value">{safeGas} gwei</span>
+      </div>
+      <div className="detail-footer">
+        <a
+          className="detail-explorer-link"
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on Explorer <ExternalLinkIcon />
+        </a>
       </div>
     </div>
   );
@@ -152,7 +194,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
 
 // ── Connection Toast ──────────────────────────
 
-function ConnectionToast() {
+const ConnectionToast = React.memo(function ConnectionToast() {
   const chainConnected = useStore((s) => s.chainConnected);
   const chainFailed = useStore((s) => s.chainFailed);
   const isSimulation = useStore((s) => s.isSimulation);
@@ -187,11 +229,11 @@ function ConnectionToast() {
       ))}
     </div>
   );
-}
+});
 
 // ── Loading Indicator ──────────────────────────
 
-function LoadingIndicator() {
+const LoadingIndicator = React.memo(function LoadingIndicator() {
   const initialized = useStore((s) => s.initialized);
   if (initialized) return null;
   return (
@@ -200,11 +242,23 @@ function LoadingIndicator() {
       <span>Connecting to chains...</span>
     </div>
   );
-}
+});
+
+// ── TX Counter (extracted to avoid re-rendering siblings) ──
+
+const TxCounter = React.memo(function TxCounter() {
+  const txCount = useStore((s) => s.txCount);
+  return (
+    <div className="hud-item">
+      <span className="hud-label">Total TX</span>
+      <span className="hud-value">{txCount.toLocaleString()}</span>
+    </div>
+  );
+});
 
 // ── Stats Strip ────────────────────────────────
 
-function StatsStrip() {
+const StatsStrip = React.memo(function StatsStrip() {
   const txCount = useStore((s) => s.txCount);
   const avgGas = useStore((s) => s.avgGas);
   const recentWhales = useStore((s) => s.recentWhales);
@@ -212,9 +266,10 @@ function StatsStrip() {
   const chainConnected = useStore((s) => s.chainConnected);
 
   const [txRate, setTxRate] = useState(0);
-  const prevCountRef = useRef(txCount);
+  const prevCountRef = useRef(0);
 
   useEffect(() => {
+    prevCountRef.current = useStore.getState().txCount;
     const id = setInterval(() => {
       const current = useStore.getState().txCount;
       setTxRate(current - prevCountRef.current);
@@ -223,7 +278,7 @@ function StatsStrip() {
     return () => clearInterval(id);
   }, []);
 
-  const safeAvgGas = Number.isFinite(avgGas) ? avgGas.toFixed(0) : '0';
+  const safeAvgGas = formatGwei(avgGas);
 
   return (
     <div className="stats-strip">
@@ -264,7 +319,7 @@ function StatsStrip() {
       })}
     </div>
   );
-}
+});
 
 // ── Mode Toggle ────────────────────────────────
 
@@ -341,13 +396,13 @@ function formatUsd(value: number): string {
   return `$${value.toLocaleString()}`;
 }
 
-function InfoButton({ onClick }: { onClick: () => void }) {
+const InfoButton = React.memo(function InfoButton({ onClick }: { onClick: () => void }) {
   return (
     <button className="info-btn" onClick={onClick} aria-label="Show legend">
       i
     </button>
   );
-}
+});
 
 function InfoPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -463,12 +518,54 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Onboarding Welcome Card ───────────────────
+
+const ONBOARDING_KEY = 'chainpulse_onboarded';
+
+function OnboardingCard() {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(ONBOARDING_KEY) === '1'; } catch { return false; }
+  });
+
+  if (dismissed) return null;
+
+  const handleDismiss = () => {
+    setDismissed(true);
+    try { localStorage.setItem(ONBOARDING_KEY, '1'); } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="onboarding-backdrop">
+      <div className="onboarding-card">
+        <div className="onboarding-title">Welcome to ChainPulse</div>
+        <div className="onboarding-body">
+          <div className="onboarding-item">
+            <span className="info-dot" style={{ background: '#627EEA' }} /> Particles are live transactions — size reflects value
+          </div>
+          <div className="onboarding-item">
+            <span className="info-dot" style={{ background: '#8247E5' }} /> Colors represent chains: Ethereum, Polygon, Arbitrum
+          </div>
+          <div className="onboarding-item">
+            <span className="onboarding-glow" /> Large glowing particles are whale transactions
+          </div>
+          <div className="onboarding-item">
+            <span className="info-ring" /> Expanding rings signal new blocks arriving
+          </div>
+          <div className="onboarding-item">
+            <span className="onboarding-click">+</span> Click any particle to inspect transaction details
+          </div>
+        </div>
+        <button className="onboarding-dismiss" onClick={handleDismiss}>Got it</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Overlay ───────────────────────────────
 
 export function Overlay() {
   const focusedChain = useStore((s) => s.focusedChain);
   const setFocusedChain = useStore((s) => s.setFocusedChain);
-  const txCount = useStore((s) => s.txCount);
   const recentWhales = useStore((s) => s.recentWhales);
   const inspectedTx = useStore((s) => s.inspectedTx);
   const transitioning = useStore((s) => s.transitioning);
@@ -488,6 +585,9 @@ export function Overlay() {
 
   return (
     <div className="overlay">
+      {/* Onboarding */}
+      <OnboardingCard />
+
       {/* Transition overlay */}
       {transitioning && <div className="transition-overlay" />}
 
@@ -539,10 +639,7 @@ export function Overlay() {
       {/* Footer */}
       <div className="overlay-footer">
         <div className="hud-left">
-          <div className="hud-item">
-            <span className="hud-label">Total TX</span>
-            <span className="hud-value">{txCount.toLocaleString()}</span>
-          </div>
+          <TxCounter />
           <ModeToggle />
           <InfoButton onClick={handleToggleInfo} />
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}

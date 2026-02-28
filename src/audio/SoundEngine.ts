@@ -19,6 +19,10 @@ class SoundEngine {
     if (this._enabled) return;
     this._enabled = true;
     this.initContext();
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+    }
     this.startAmbient();
   }
 

@@ -28,6 +28,9 @@ export function BridgeArcs() {
     for (const event of events) {
       if (arcsRef.current.length >= MAX_ARCS) {
         arcsRef.current.shift();
+        // Keep geometries aligned with arcs after shift
+        const evicted = geometriesRef.current.shift();
+        if (evicted) evicted.dispose();
       }
 
       const from = new THREE.Vector3(...event.fromCenter);

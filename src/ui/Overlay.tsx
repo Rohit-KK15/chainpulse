@@ -843,13 +843,15 @@ function PortfolioPanel() {
 
   useEffect(() => {
     if (!isWalletConnected || !walletAddress) return;
+    let cancelled = false;
     setLoading(true);
     fetchPortfolio(walletAddress)
       .then((balances) => {
-        useStore.getState().setPortfolio(balances);
+        if (!cancelled) useStore.getState().setPortfolio(balances);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [isWalletConnected, walletAddress]);
 
   if (!isWalletConnected) return null;

@@ -379,7 +379,6 @@ export function ParticleField() {
     trailGeo.attributes.color.needsUpdate = true;
     (trailGeo.attributes.aSize as THREE.BufferAttribute).needsUpdate = true;
     (trailGeo.attributes.aOpacity as THREE.BufferAttribute).needsUpdate = true;
-    (trailGeo.attributes.aEnergy as THREE.BufferAttribute).needsUpdate = true;
     (trailGeo.attributes.aIsWhale as THREE.BufferAttribute).needsUpdate = true;
     trailGeo.setDrawRange(0, trailCount);
 

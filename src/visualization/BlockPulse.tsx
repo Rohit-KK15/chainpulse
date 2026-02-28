@@ -76,16 +76,18 @@ export function BlockPulse() {
       group.visible = true;
       group.position.set(p.cx, p.cy, p.cz);
 
-      // Scale grows with gentle ease-out (slower expansion)
-      const easeProgress = 1 - Math.pow(1 - progress, 1.5);
-      const radius = PULSE_MAX_RADIUS * easeProgress;
+      // Scale: ring uses inner 70% of UV space; 1.45x world scale compensates
+      const easeProgress = 1 - Math.pow(1 - progress, 2);
+      const radius = PULSE_MAX_RADIUS * 1.45 * easeProgress;
       group.scale.setScalar(radius);
 
-      // Opacity: gradual linear-ish fade instead of steep quadratic dropoff
-      const opacity = Math.pow(1 - progress, 1.2) * 0.45;
+      // Opacity: fade completes at 80% of duration — invisible buffer before deactivation
+      const fadeProgress = Math.min(progress * 1.25, 1);
+      const t = 1 - fadeProgress;
+      const opacity = t * t * (3 - 2 * t) * 0.5;
 
       mat.uniforms.uColor.value.set(p.r, p.g, p.b);
-      mat.uniforms.uProgress.value = easeProgress;
+      mat.uniforms.uProgress.value = easeProgress * 0.7;
       mat.uniforms.uOpacity.value = opacity;
       mat.uniforms.uTime.value = time;
     });

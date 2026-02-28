@@ -746,33 +746,66 @@ function WhaleHistoryPanel({ onClose }: { onClose: () => void }) {
 
 // ── Whale Alerts Panel ────────────────────────
 
+const MAX_VISIBLE_WHALES = 6;
+const WHALE_EXIT_MS = 450;
+
 function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/types').ProcessedTransaction[] }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [exiting, setExiting] = useState<import('../data/types').ProcessedTransaction[]>([]);
+  const prevRef = useRef<import('../data/types').ProcessedTransaction[]>([]);
+
+  useEffect(() => {
+    const prev = prevRef.current;
+    const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
+    const visibleHashes = new Set(visible.map((w) => w.hash));
+
+    // Detect items that fell off the visible list
+    const removed = prev.filter((w) => !visibleHashes.has(w.hash));
+
+    if (removed.length > 0) {
+      const removedHashes = removed.map((w) => w.hash);
+      setExiting((prev) => [...prev, ...removed]);
+      setTimeout(() => {
+        setExiting((prev) => prev.filter((w) => !removedHashes.includes(w.hash)));
+      }, WHALE_EXIT_MS);
+    }
+
+    prevRef.current = visible;
+  }, [recentWhales]);
+
+  const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
+  const exitHashes = new Set(exiting.map((w) => w.hash));
+  const displayList = [...visible, ...exiting];
 
   return (
     <div className="whale-alerts-container">
       <div className="whale-alerts">
-        {recentWhales.map((whale) => {
+        {displayList.map((whale) => {
           const chain = CHAINS[whale.chainId];
+          const isExit = exitHashes.has(whale.hash);
           return (
-            <a
+            <div
               key={whale.hash}
-              className="whale-alert"
-              href={`${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${whale.hash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                '--chain-color': chain?.color.primary ?? '#fff',
-              } as React.CSSProperties}
+              className={`whale-alert-wrap${isExit ? ' whale-alert-wrap--exit' : ''}`}
             >
-              <span className="whale-alert-chain-dot" style={{ background: chain?.color.primary }} />
-              <span className="whale-alert-chain-name">{chain?.abbr}</span>
-              <span className="whale-value">
-                {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
-              </span>
-              <span className="whale-alert-from">{truncateAddress(whale.from)}</span>
-              <span className="whale-alert-time">{formatRelativeTime(whale.timestamp)}</span>
-            </a>
+              <a
+                className="whale-alert"
+                href={`${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${whale.hash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  '--chain-color': chain?.color.primary ?? '#fff',
+                } as React.CSSProperties}
+              >
+                <span className="whale-alert-chain-dot" style={{ background: chain?.color.primary }} />
+                <span className="whale-alert-chain-name">{chain?.abbr}</span>
+                <span className="whale-value">
+                  {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
+                </span>
+                <span className="whale-alert-from">{truncateAddress(whale.from)}</span>
+                <span className="whale-alert-time">{formatRelativeTime(whale.timestamp)}</span>
+              </a>
+            </div>
           );
         })}
       </div>
@@ -790,11 +823,21 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
 
 // ── Portfolio Panel ───────────────────────────
 
+function formatPortfolioUsd(value: number): string {
+  if (value < 0.01) return '<$0.01';
+  if (value < 1_000) return `$${value.toFixed(2)}`;
+  if (value < 10_000) return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (value < 1_000_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${(value / 1_000_000).toFixed(2)}M`;
+}
+
 function PortfolioPanel() {
   const isWalletConnected = useStore((s) => s.isWalletConnected);
   const walletAddress = useStore((s) => s.walletAddress);
   const portfolio = useStore((s) => s.portfolio);
   const portfolioVisible = useStore((s) => s.portfolioVisible);
+  const tokenPrices = useStore((s) => s.tokenPrices);
+  const netFlow = useStore((s) => s.netFlow);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -812,6 +855,43 @@ function PortfolioPanel() {
 
   const toggleVisible = () => useStore.getState().setPortfolioVisible(!portfolioVisible);
 
+  // Enrich portfolio items with USD values
+  const enriched = portfolio.map((item) => {
+    const price = tokenPrices[item.symbol] ?? 0;
+    const usdValue = item.balance * price;
+    return { ...item, usdValue };
+  });
+
+  const totalUsd = enriched.reduce((sum, item) => sum + item.usdValue, 0);
+
+  // Chain allocation totals
+  const chainTotals: Record<string, number> = {};
+  for (const item of enriched) {
+    chainTotals[item.chain] = (chainTotals[item.chain] ?? 0) + item.usdValue;
+  }
+
+  // Sort by USD value descending
+  const sorted = [...enriched].sort((a, b) => b.usdValue - a.usdValue);
+
+  // Build conic-gradient for ring chart
+  const chainEntries = Object.entries(chainTotals)
+    .filter(([, v]) => v > 0)
+    .sort(([, a], [, b]) => b - a);
+
+  let conicGradient = '';
+  if (totalUsd > 0 && chainEntries.length > 0) {
+    const segments: string[] = [];
+    let cumulative = 0;
+    for (const [chainId, value] of chainEntries) {
+      const chain = CHAINS[chainId];
+      const pct = (value / totalUsd) * 100;
+      const start = cumulative;
+      cumulative += pct;
+      segments.push(`${chain?.color.primary ?? '#666'} ${start.toFixed(2)}% ${cumulative.toFixed(2)}%`);
+    }
+    conicGradient = `conic-gradient(from 220deg, ${segments.join(', ')})`;
+  }
+
   return (
     <>
       <button
@@ -819,36 +899,150 @@ function PortfolioPanel() {
         onClick={toggleVisible}
         title={portfolioVisible ? 'Hide portfolio' : 'Show portfolio'}
       >
-        {portfolioVisible ? '📊' : '📊'}
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 20V10" />
+          <path d="M12 20V4" />
+          <path d="M6 20v-6" />
+        </svg>
       </button>
       {portfolioVisible && (
         <div className="portfolio-panel">
-          <div className="info-panel-header">
-            <span>Portfolio</span>
-            <button className="detail-close" onClick={toggleVisible}>x</button>
+          <div className="portfolio-header">
+            <span className="portfolio-title">PORTFOLIO</span>
+            <button className="detail-close" onClick={toggleVisible}>&times;</button>
           </div>
+
           {loading ? (
-            <div className="portfolio-loading">Loading balances...</div>
-          ) : portfolio.length === 0 ? (
-            <div className="portfolio-empty">No balances found</div>
-          ) : (
-            <div className="portfolio-list">
-              {portfolio.map((item, i) => {
-                const chain = CHAINS[item.chain];
-                return (
-                  <div key={`${item.chain}-${item.symbol}-${i}`} className="portfolio-item">
-                    <span className="portfolio-dot" style={{ background: item.color }} />
-                    <span className="portfolio-symbol">{item.symbol}</span>
-                    <span className="portfolio-balance">
-                      {item.balance < 0.01 ? '<0.01' : item.balance.toFixed(4)}
-                    </span>
-                    <span className="portfolio-chain" style={{ color: chain?.color.primary }}>
-                      {chain?.abbr ?? item.chain}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="portfolio-loading">
+              <div className="portfolio-loading-spinner" />
+              <span>Scanning chains...</span>
             </div>
+          ) : portfolio.length === 0 ? (
+            <div className="portfolio-empty">
+              <div className="portfolio-empty-icon">&loz;</div>
+              <span>No balances found</span>
+            </div>
+          ) : (
+            <>
+              {/* Hero: Ring chart + Total value */}
+              <div className="portfolio-hero">
+                <div className="portfolio-ring-wrap">
+                  <div
+                    className={`portfolio-ring${conicGradient ? '' : ' portfolio-ring--empty'}`}
+                    style={conicGradient ? { background: conicGradient } : undefined}
+                  />
+                  <div className="portfolio-ring-inner">
+                    <span className="portfolio-ring-count">{chainEntries.length || '--'}</span>
+                    <span className="portfolio-ring-sub">chains</span>
+                  </div>
+                </div>
+                <div className="portfolio-hero-data">
+                  <span className="portfolio-hero-label">Total Value</span>
+                  <span className="portfolio-hero-value">
+                    {totalUsd > 0 ? formatPortfolioUsd(totalUsd) : '--'}
+                  </span>
+                  <span className="portfolio-hero-count">{sorted.length} asset{sorted.length !== 1 ? 's' : ''}</span>
+                </div>
+              </div>
+
+              {/* Chain allocation pills */}
+              {chainEntries.length > 0 && (
+                <div className="portfolio-alloc">
+                  {chainEntries.map(([chainId, value]) => {
+                    const chain = CHAINS[chainId];
+                    const pct = totalUsd > 0 ? (value / totalUsd) * 100 : 0;
+                    return (
+                      <div
+                        key={chainId}
+                        className="portfolio-alloc-pill"
+                        style={{ '--pill-color': chain?.color.primary } as React.CSSProperties}
+                      >
+                        <span className="portfolio-alloc-dot" style={{ background: chain?.color.primary }} />
+                        <span className="portfolio-alloc-name">{chain?.name ?? chainId}</span>
+                        <span className="portfolio-alloc-pct">{pct.toFixed(0)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Net flow */}
+              {(netFlow.sent > 0 || netFlow.received > 0) && (
+                <div className="portfolio-flow">
+                  <div className="portfolio-flow-item">
+                    <span className="portfolio-flow-arrow portfolio-flow-in">&uarr;</span>
+                    <div className="portfolio-flow-data">
+                      <span className="portfolio-flow-value">{netFlow.received.toFixed(4)}</span>
+                      <span className="portfolio-flow-label">Received</span>
+                    </div>
+                  </div>
+                  <div className="portfolio-flow-divider" />
+                  <div className="portfolio-flow-item">
+                    <span className="portfolio-flow-arrow portfolio-flow-out">&darr;</span>
+                    <div className="portfolio-flow-data">
+                      <span className="portfolio-flow-value">{netFlow.sent.toFixed(4)}</span>
+                      <span className="portfolio-flow-label">Sent</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Gradient divider */}
+              <div className="portfolio-divider" />
+
+              {/* Token list */}
+              <div className="portfolio-list">
+                {sorted.map((item, i) => {
+                  const chain = CHAINS[item.chain];
+                  const pct = totalUsd > 0 ? (item.usdValue / totalUsd) * 100 : 0;
+                  return (
+                    <div
+                      key={`${item.chain}-${item.symbol}-${i}`}
+                      className="portfolio-item"
+                      style={{ animationDelay: `${i * 50}ms` } as React.CSSProperties}
+                    >
+                      <div className="portfolio-item-accent" style={{ background: item.color }} />
+                      <div className="portfolio-item-body">
+                        <div className="portfolio-item-top">
+                          <span className="portfolio-symbol">{item.symbol}</span>
+                          <span
+                            className="portfolio-chain-badge"
+                            style={{ color: chain?.color.primary, borderColor: (chain?.color.primary ?? '#666') + '40' }}
+                          >
+                            {chain?.abbr ?? item.chain}
+                          </span>
+                          <span className="portfolio-usd">
+                            {item.usdValue > 0.01 ? formatPortfolioUsd(item.usdValue) : ''}
+                          </span>
+                        </div>
+                        <div className="portfolio-item-bottom">
+                          <span className="portfolio-balance">
+                            {item.balance < 0.01
+                              ? '<0.01'
+                              : item.balance < 1
+                                ? item.balance.toFixed(4)
+                                : item.balance < 10_000
+                                  ? item.balance.toFixed(2)
+                                  : item.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                          {pct > 0 && (
+                            <div className="portfolio-pct-track">
+                              <div
+                                className="portfolio-pct-fill"
+                                style={{ width: `${Math.max(pct, 2)}%`, background: item.color }}
+                              />
+                            </div>
+                          )}
+                          {pct > 0 && (
+                            <span className="portfolio-pct-text">{pct.toFixed(0)}%</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       )}

@@ -35,6 +35,9 @@ export function useChainData(): void {
     }, 400);
 
     const chainIds = Object.keys(CHAINS);
+    // Throttle block pulse visuals + chime for fast chains (Arbitrum 0.25s blocks)
+    const lastPulseTime: Record<string, number> = {};
+    const MIN_PULSE_INTERVAL_MS = 2000;
 
     function setupProviders() {
       let hasData = false;
@@ -76,18 +79,24 @@ export function useChainData(): void {
             const newBlock = processed[0].blockNumber;
             if (newBlock !== prevBlock) {
               s.setLatestBlock(chainId, newBlock);
-              // Audio: block chime
-              if (useStore.getState().audioEnabled) {
-                soundEngine.playBlockChime();
-              }
-              // Emit block pulse wave
-              const chainConfig = CHAINS[chainId];
-              if (chainConfig) {
-                queueBlockPulse({
-                  chainId,
-                  center: chainConfig.center as [number, number, number],
-                  color: hexToRgb(chainConfig.color.primary),
-                });
+
+              // Throttle pulse + chime for fast-block chains
+              const now = Date.now();
+              if (!lastPulseTime[chainId] || now - lastPulseTime[chainId] >= MIN_PULSE_INTERVAL_MS) {
+                lastPulseTime[chainId] = now;
+                // Audio: block chime
+                if (useStore.getState().audioEnabled) {
+                  soundEngine.playBlockChime();
+                }
+                // Emit block pulse wave
+                const chainConfig = CHAINS[chainId];
+                if (chainConfig) {
+                  queueBlockPulse({
+                    chainId,
+                    center: chainConfig.center as [number, number, number],
+                    color: hexToRgb(chainConfig.color.primary),
+                  });
+                }
               }
             }
           }

@@ -157,26 +157,24 @@ export const blockPulseFragmentShader = /* glsl */ `
     vec2 uv = vUv - 0.5;
     float dist = length(uv) * 2.0;
 
-    if (dist > 1.0) discard;
+    // ── Soft radial fade — content vanishes before geometry edge ──
+    float edgeFade = 1.0 - smoothstep(0.75, 0.97, dist);
+    if (edgeFade < 0.001) discard;
 
-    // ── Smooth edge feather — fade to zero before geometry boundary ──
-    float edgeFade = 1.0 - smoothstep(0.88, 1.0, dist);
+    // ── Ring sharpness loosens as the wave spreads (sharp → diffuse) ──
+    float spread = 1.0 + uProgress * 2.0;
+    float sharpness = 22.0 / spread;
 
-    // ── Primary ring: soft gaussian, leading edge ──
+    // ── Primary ring: gaussian that softens as it expands ──
     float ringDelta = dist - uProgress;
-    float primaryRing = exp(-ringDelta * ringDelta * 18.0);
+    float primaryRing = exp(-ringDelta * ringDelta * sharpness);
 
-    // ── Secondary trailing ring: thinner, delayed ──
-    float trailPos = max(uProgress - 0.12, 0.0);
+    // ── Secondary trailing ring: delayed, also softens ──
+    float trailPos = max(uProgress - 0.15, 0.0);
     float trailDelta = dist - trailPos;
-    float trailRing = exp(-trailDelta * trailDelta * 35.0) * 0.35;
+    float trailRing = exp(-trailDelta * trailDelta * sharpness * 1.4) * 0.3;
 
-    // ── Tertiary whisper ring: very faint, even further behind ──
-    float whisperPos = max(uProgress - 0.28, 0.0);
-    float whisperDelta = dist - whisperPos;
-    float whisperRing = exp(-whisperDelta * whisperDelta * 50.0) * 0.12;
-
-    // ── Inner nebula: diffuse fill that dissipates as wave expands ──
+    // ── Inner glow: diffuse fill that dissipates as wave expands ──
     float innerFill = exp(-dist * dist * 3.0) * (1.0 - uProgress) * (1.0 - uProgress);
 
     // ── Angular variation — subtle organic break of perfect symmetry ──
@@ -187,7 +185,6 @@ export const blockPulseFragmentShader = /* glsl */ `
     // ── Combine layers ──
     float ring = primaryRing * wobble * 0.4
                + trailRing * 0.3
-               + whisperRing
                + innerFill * 0.06;
 
     // ── Chromatic depth ──

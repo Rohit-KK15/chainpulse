@@ -117,7 +117,7 @@ interface AppState {
   setReplayProgress: (cursor: number, total: number) => void;
 }
 
-const MAX_RECENT_WHALES = 5;
+const MAX_RECENT_WHALES = 6;
 const MAX_GAS_SAMPLES = 100;
 const MAX_WHALE_HISTORY = 50;
 

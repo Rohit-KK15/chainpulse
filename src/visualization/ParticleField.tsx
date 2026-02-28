@@ -17,7 +17,9 @@ const IS_LOW_END = typeof navigator !== 'undefined' && (
 );
 const MAX_PARTICLES = IS_LOW_END ? 300 : 600;
 const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
-const DRAIN_PER_FRAME = IS_LOW_END ? 4 : 6;
+const SPREAD_WINDOW = 0.5;   // drain any queue buildup over ~0.5 seconds
+const MIN_DRAIN_RATE = 2.0;  // floor prevents zero-spawn gaps between ticks
+const MAX_PER_FRAME = IS_LOW_END ? 8 : 12;  // cap to prevent frame drops
 const SPAWN_RADIUS = 3.5;
 const PULSE_NUDGE_RADIUS = 5;
 const PULSE_NUDGE_STRENGTH = 0.1;
@@ -183,7 +185,10 @@ export function ParticleField() {
     transitionOpacity.current += (targetOpacity - transitionOpacity.current) * Math.min(delta * 5, 1);
 
     // Drain queued transactions and spawn particles at chain cluster positions
-    const batch = txQueue.drain(DRAIN_PER_FRAME);
+    const queueSize = txQueue.size;
+    const targetRate = Math.max(queueSize / SPREAD_WINDOW, MIN_DRAIN_RATE);
+    const spawnsThisFrame = Math.min(Math.ceil(targetRate * delta), MAX_PER_FRAME);
+    const batch = txQueue.drain(spawnsThisFrame);
     for (const tx of batch) {
       const chainCenter = CHAINS[tx.chainId]?.center ?? [0, 0, 0];
       const personality = getPersonality(tx.chainId);

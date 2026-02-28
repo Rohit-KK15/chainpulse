@@ -20,6 +20,10 @@ class TransactionQueue {
     }
   }
 
+  get size(): number {
+    return this.queue.length;
+  }
+
   drain(count: number = 5): ProcessedTransaction[] {
     return this.queue.splice(0, count);
   }

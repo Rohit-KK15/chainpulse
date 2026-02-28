@@ -10,6 +10,8 @@ import { queueBlockPulse } from '../visualization/blockPulseEvents';
 import { hexToRgb } from '../utils/color';
 import type { RawTransaction } from '../data/types';
 import { soundEngine } from '../audio/SoundEngine';
+import { detectBridge } from '../config/bridges';
+import { queueBridgeArc } from '../visualization/bridgeArcEvents';
 
 type Provider = ConnectionManager | SimulationProvider;
 
@@ -95,6 +97,24 @@ export function useChainData(): void {
               useStore.getState().addWhale(tx);
               if (useStore.getState().audioEnabled) {
                 soundEngine.playWhaleAlert();
+              }
+            }
+
+            // Detect bridge transactions for cross-chain arcs
+            const bridge = detectBridge(tx.to);
+            if (bridge) {
+              const fromChainConfig = CHAINS[bridge.fromChain];
+              const toChainConfig = CHAINS[bridge.toChain];
+              if (fromChainConfig && toChainConfig) {
+                queueBridgeArc({
+                  fromChain: bridge.fromChain,
+                  toChain: bridge.toChain,
+                  fromCenter: fromChainConfig.center as [number, number, number],
+                  toCenter: toChainConfig.center as [number, number, number],
+                  color: hexToRgb(fromChainConfig.color.primary),
+                  value: tx.value,
+                  timestamp: tx.timestamp,
+                });
               }
             }
 

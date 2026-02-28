@@ -7,7 +7,11 @@ import { ParticleField } from './ParticleField';
 import { WhaleEffects } from './WhaleEffects';
 import { BlockPulse } from './BlockPulse';
 import { AmbientField } from './AmbientField';
+import { BridgeArcs } from './BridgeArcs';
 import { useStore } from '../stores/useStore';
+
+/** Expose the WebGL canvas globally so the screenshot feature can capture it */
+export let sceneCanvas: HTMLCanvasElement | null = null;
 
 function useIsTouchDevice(): boolean {
   return useSyncExternalStore(
@@ -67,6 +71,7 @@ export function Scene() {
 
   const handleCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
     const canvas = gl.domElement;
+    sceneCanvas = canvas;
     canvas.addEventListener('webglcontextlost', (event: Event) => {
       event.preventDefault();
       setContextLost(true);
@@ -88,7 +93,7 @@ export function Scene() {
       <Canvas
         camera={{ position: [0, 0, 22], fov: 60, near: 0.1, far: 100 }}
         dpr={[1, 2]}
-        gl={{ antialias: true, alpha: false }}
+        gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
         onCreated={handleCreated}
       >
         <color attach="background" args={['#030308']} />
@@ -98,6 +103,7 @@ export function Scene() {
           <ParticleField />
           <WhaleEffects />
           <BlockPulse />
+          <BridgeArcs />
 
           <EffectComposer>
             <Bloom

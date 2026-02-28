@@ -102,6 +102,19 @@ interface AppState {
   // Audio
   audioEnabled: boolean;
   setAudioEnabled: (v: boolean) => void;
+
+  // Token prices
+  tokenPrices: Record<string, number>;
+  setTokenPrices: (prices: Record<string, number>) => void;
+
+  // Replay
+  replayMode: boolean;
+  replayLoading: boolean;
+  replayCursor: number;
+  replayTotal: number;
+  setReplayMode: (v: boolean) => void;
+  setReplayLoading: (v: boolean) => void;
+  setReplayProgress: (cursor: number, total: number) => void;
 }
 
 const MAX_RECENT_WHALES = 5;
@@ -279,4 +292,17 @@ export const useStore = create<AppState>((set, get) => ({
   // Audio
   audioEnabled: false,
   setAudioEnabled: (v) => set({ audioEnabled: v }),
+
+  // Token prices
+  tokenPrices: {},
+  setTokenPrices: (prices) => set({ tokenPrices: prices }),
+
+  // Replay
+  replayMode: false,
+  replayLoading: false,
+  replayCursor: 0,
+  replayTotal: 0,
+  setReplayMode: (v) => set({ replayMode: v }),
+  setReplayLoading: (v) => set({ replayLoading: v }),
+  setReplayProgress: (cursor, total) => set({ replayCursor: cursor, replayTotal: total }),
 }));

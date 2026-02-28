@@ -5,6 +5,10 @@ import { walletManager } from '../wallet/WalletManager';
 import { useENSName } from '../utils/ensCache';
 import { soundEngine } from '../audio/SoundEngine';
 import { fetchPortfolio } from '../wallet/PortfolioTracker';
+import { sceneCanvas } from '../visualization/Scene';
+import { fetchAllChainHistory } from '../wallet/HistoryFetcher';
+import { fetchPrices, formatUsdValue } from '../data/PriceFeed';
+import { replayBuffer, ReplaySpeed } from '../data/ReplayBuffer';
 
 // ── Clipboard helper ───────────────────────────
 
@@ -150,6 +154,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   const safeValue = Number.isFinite(tx.value) ? tx.value.toFixed(4) : '0';
   const safeGas = formatGwei(tx.gasPrice);
   const valueUnit = tx.tokenSymbol ?? chain?.nativeCurrency ?? '';
+  const usdValue = formatUsdValue(tx.value, valueUnit);
   const explorerUrl = `${chain?.explorerTx ?? 'https://etherscan.io/tx/'}${tx.hash}`;
 
   return (
@@ -180,6 +185,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
         <span className="detail-label">Value</span>
         <span className="detail-value">
           {safeValue} {valueUnit}
+          {usdValue && <span className="detail-usd">{usdValue}</span>}
           {tx.isStablecoin && <span className="detail-badge">Stablecoin</span>}
         </span>
       </div>
@@ -465,6 +471,7 @@ const GAS_ESTIMATES = [
 
 function GasEstimator() {
   const avgGasPerChain = useStore((s) => s.avgGasPerChain);
+  const tokenPrices = useStore((s) => s.tokenPrices);
   const chains = Object.values(CHAINS);
 
   // Only show if we have gas data for at least one chain
@@ -493,16 +500,20 @@ function GasEstimator() {
                 if (gasPrice === undefined) return <span key={c.id} className="gas-est-val">--</span>;
                 const costGwei = gasPrice * est.gas;
                 const costEth = costGwei / 1e9;
+                const nativePrice = tokenPrices[c.nativeCurrency];
+                const usdCost = nativePrice ? costEth * nativePrice : null;
                 return (
-                  <span key={c.id} className="gas-est-val">
-                    {costEth < 0.0001 ? '<0.0001' : costEth.toFixed(4)}
+                  <span key={c.id} className="gas-est-val" title={`${costEth.toFixed(6)} ${c.nativeCurrency}`}>
+                    {usdCost !== null ? (usdCost < 0.01 ? '<$0.01' : `$${usdCost.toFixed(2)}`) : (costEth < 0.0001 ? '<0.0001' : costEth.toFixed(4))}
                   </span>
                 );
               })}
             </div>
           ))}
         </div>
-        <div className="info-slider-note">Cost in native token ({chains.map((c) => c.nativeCurrency).filter((v, i, a) => a.indexOf(v) === i).join('/')})</div>
+        <div className="info-slider-note">
+          {Object.keys(tokenPrices).length > 0 ? 'Estimated USD cost' : `Cost in native token (${chains.map((c) => c.nativeCurrency).filter((v, i, a) => a.indexOf(v) === i).join('/')})`}
+        </div>
       </div>
     </>
   );
@@ -884,6 +895,205 @@ function AudioToggle() {
   );
 }
 
+// ── Replay Timeline ──────────────────────────
+
+function ReplayTimeline() {
+  const isWalletConnected = useStore((s) => s.isWalletConnected);
+  const walletAddress = useStore((s) => s.walletAddress);
+  const replayMode = useStore((s) => s.replayMode);
+  const replayLoading = useStore((s) => s.replayLoading);
+  const replayCursor = useStore((s) => s.replayCursor);
+  const replayTotal = useStore((s) => s.replayTotal);
+  const [speed, setSpeed] = useState<ReplaySpeed>(5);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    replayBuffer.setOnProgress((cursor, total) => {
+      useStore.getState().setReplayProgress(cursor, total);
+      if (cursor >= total && total > 0) setPlaying(false);
+    });
+  }, []);
+
+  const startReplay = async () => {
+    if (!walletAddress) return;
+    const store = useStore.getState();
+    store.setReplayLoading(true);
+    store.setReplayMode(true);
+
+    const txs = await fetchAllChainHistory(walletAddress);
+    store.setReplayLoading(false);
+
+    if (txs.length === 0) {
+      store.setReplayMode(false);
+      return;
+    }
+
+    replayBuffer.load(txs);
+    store.setReplayProgress(0, txs.length);
+    replayBuffer.setSpeed(speed);
+    replayBuffer.play();
+    setPlaying(true);
+  };
+
+  const stopReplay = () => {
+    replayBuffer.stop();
+    setPlaying(false);
+    useStore.getState().setReplayMode(false);
+    useStore.getState().setReplayProgress(0, 0);
+  };
+
+  const togglePlay = () => {
+    if (playing) {
+      replayBuffer.pause();
+      setPlaying(false);
+    } else {
+      replayBuffer.setSpeed(speed);
+      replayBuffer.play();
+      setPlaying(true);
+    }
+  };
+
+  const handleSpeedChange = (s: ReplaySpeed) => {
+    setSpeed(s);
+    replayBuffer.setSpeed(s);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const pos = parseInt(e.target.value, 10);
+    replayBuffer.seek(pos);
+  };
+
+  if (!isWalletConnected) return null;
+
+  if (!replayMode) {
+    return (
+      <button className="replay-start-btn" onClick={startReplay} disabled={replayLoading}>
+        {replayLoading ? 'Loading...' : 'Replay History'}
+      </button>
+    );
+  }
+
+  const progress = replayTotal > 0 ? Math.round((replayCursor / replayTotal) * 100) : 0;
+
+  return (
+    <div className="replay-timeline">
+      <div className="replay-controls">
+        <button className="replay-btn" onClick={togglePlay} title={playing ? 'Pause' : 'Play'}>
+          {playing ? '⏸' : '▶'}
+        </button>
+        <button className="replay-btn" onClick={stopReplay} title="Stop">⏹</button>
+        <div className="replay-speed">
+          {([1, 5, 20] as ReplaySpeed[]).map((s) => (
+            <button
+              key={s}
+              className={`replay-speed-btn ${speed === s ? 'active' : ''}`}
+              onClick={() => handleSpeedChange(s)}
+            >
+              {s}x
+            </button>
+          ))}
+        </div>
+        <span className="replay-progress">{progress}%</span>
+      </div>
+      <input
+        type="range"
+        className="replay-scrubber"
+        min={0}
+        max={replayTotal}
+        value={replayCursor}
+        onChange={handleSeek}
+      />
+      <div className="replay-info">
+        <span>{replayCursor.toLocaleString()} / {replayTotal.toLocaleString()} txns</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Screenshot Button + Modal ─────────────────
+
+function ScreenshotButton() {
+  const [preview, setPreview] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const capture = () => {
+    if (!sceneCanvas) return;
+    const dataUrl = sceneCanvas.toDataURL('image/png');
+
+    // Composite with watermark
+    const img = new Image();
+    img.onload = () => {
+      const offscreen = document.createElement('canvas');
+      offscreen.width = img.width;
+      offscreen.height = img.height;
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) { setPreview(dataUrl); return; }
+      ctx.drawImage(img, 0, 0);
+
+      // Watermark bar at bottom
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(0, img.height - 28, img.width, 28);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.font = '12px monospace';
+      const s = useStore.getState();
+      const text = `ChainPulse | TX: ${s.txCount.toLocaleString()} | Whales: ${s.recentWhales.length}`;
+      ctx.fillText(text, 8, img.height - 10);
+
+      setPreview(offscreen.toDataURL('image/png'));
+    };
+    img.src = dataUrl;
+  };
+
+  const download = () => {
+    if (!preview) return;
+    const link = document.createElement('a');
+    link.download = `chainpulse-${Date.now()}.png`;
+    link.href = preview;
+    link.click();
+  };
+
+  const copyImage = async () => {
+    if (!preview) return;
+    try {
+      const res = await fetch(preview);
+      const blob = await res.blob();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard API may not support images */ }
+  };
+
+  return (
+    <>
+      <button
+        className="screenshot-btn"
+        onClick={capture}
+        title="Capture screenshot"
+        aria-label="Capture screenshot"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+          <circle cx="12" cy="13" r="4" />
+        </svg>
+      </button>
+      {preview && (
+        <div className="screenshot-modal-backdrop" onClick={() => setPreview(null)}>
+          <div className="screenshot-modal" onClick={(e) => e.stopPropagation()}>
+            <img src={preview} alt="Screenshot preview" className="screenshot-preview" />
+            <div className="screenshot-actions">
+              <button className="screenshot-action" onClick={download}>Download</button>
+              <button className="screenshot-action" onClick={copyImage}>
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+              <button className="screenshot-action screenshot-action--close" onClick={() => setPreview(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Onboarding Welcome Card ───────────────────
 
 const ONBOARDING_KEY = 'chainpulse_onboarded';
@@ -936,6 +1146,18 @@ export function Overlay() {
   const inspectedTx = useStore((s) => s.inspectedTx);
   const transitioning = useStore((s) => s.transitioning);
   const [infoOpen, setInfoOpen] = useState(false);
+
+  // Fetch token prices on mount and refresh every 60s
+  useEffect(() => {
+    const load = () => {
+      fetchPrices().then((prices) => {
+        useStore.getState().setTokenPrices(prices);
+      }).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const handleCloseDetail = useCallback(() => {
     useStore.getState().setInspectedTx(null);
@@ -1012,12 +1234,16 @@ export function Overlay() {
           <ModeToggle />
           <InfoButton onClick={handleToggleInfo} />
           <AudioToggle />
+          <ScreenshotButton />
           <PortfolioPanel />
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 
         <WhaleAlertsPanel recentWhales={recentWhales} />
       </div>
+
+      {/* Replay timeline */}
+      <ReplayTimeline />
 
       {/* Tx detail panel */}
       {inspectedTx && (

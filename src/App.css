@@ -614,6 +614,12 @@ button:focus-visible,
   position: relative;
 }
 
+.whale-alert-icon {
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .whale-alert-chain-dot {
   width: 6px;
   height: 6px;
@@ -895,6 +901,73 @@ button:focus-visible,
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ── Hover Tooltip ──────────────────────────────── */
+
+.hover-tooltip {
+  position: fixed;
+  width: 240px;
+  background: rgba(8, 8, 20, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--chain-color, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  pointer-events: none;
+  z-index: 90;
+  animation: fadeIn 0.1s ease-out;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.hover-tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.hover-tooltip-chain {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.8);
+  flex: 1;
+}
+
+.hover-tooltip-time {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.hover-tooltip-row {
+  font-size: var(--font-size-sm);
+  color: rgba(255, 255, 255, 0.65);
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hover-tooltip-value {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: var(--font-size-base);
+}
+
+.hover-tooltip-usd {
+  color: rgba(80, 200, 120, 0.7);
+  font-size: var(--font-size-xs);
+}
+
+.hover-tooltip-hash {
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.hover-tooltip-addrs {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 /* ── Transition overlay ─────────────────────────── */

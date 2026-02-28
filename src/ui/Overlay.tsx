@@ -102,6 +102,18 @@ function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// ── Value formatting (humanized) ─────────────
+
+function formatHumanValue(v: number): string {
+  if (!Number.isFinite(v) || v === 0) return '0';
+  if (v < 0.0001) return '<0.0001';
+  if (v < 1) return v.toPrecision(3);
+  if (v < 1_000) return v.toFixed(2);
+  if (v < 1_000_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (v < 1_000_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  return `${(v / 1_000_000_000).toFixed(2)}B`;
+}
+
 // ── Time formatting ───────────────────────────
 
 function formatRelativeTime(timestamp: number): string {
@@ -149,7 +161,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const safeValue = Number.isFinite(tx.value) ? tx.value.toFixed(4) : '0';
+  const safeValue = formatHumanValue(tx.value);
   const safeGas = formatGwei(tx.gasPrice);
   const valueUnit = tx.tokenSymbol ?? chain?.nativeCurrency ?? '';
   const usdValue = formatUsdValue(tx.value, valueUnit);
@@ -206,6 +218,58 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
         >
           View on Explorer <ExternalLinkIcon />
         </a>
+      </div>
+    </div>
+  );
+}
+
+// ── Hover Tooltip ──────────────────────────────
+
+function HoverTooltip() {
+  const hoveredTx = useStore((s) => s.hoveredTx);
+  const inspectedTx = useStore((s) => s.inspectedTx);
+
+  if (!hoveredTx || inspectedTx) return null;
+
+  const chain = CHAINS[hoveredTx.chainId];
+  const valueUnit = hoveredTx.tokenSymbol ?? chain?.nativeCurrency ?? '';
+  const safeValue = formatHumanValue(hoveredTx.value);
+  const usdValue = formatUsdValue(hoveredTx.value, valueUnit);
+
+  // Position near cursor, clamped to viewport
+  const vw = window.visualViewport?.width ?? document.documentElement.clientWidth;
+  const vh = window.visualViewport?.height ?? document.documentElement.clientHeight;
+  const tooltipW = 240;
+  const tooltipH = 90;
+  const style: React.CSSProperties = {
+    left: Math.max(0, Math.min(hoveredTx.screenX + 16, vw - tooltipW - 8)),
+    top: Math.max(0, Math.min(hoveredTx.screenY + 16, vh - tooltipH - 8)),
+  };
+
+  return (
+    <div
+      className="hover-tooltip"
+      style={{
+        ...style,
+        '--chain-color': chain?.color.primary ?? '#fff',
+      } as React.CSSProperties}
+    >
+      <div className="hover-tooltip-header">
+        <span className="detail-chain-dot" style={{ background: chain?.color.primary }} />
+        <span className="hover-tooltip-chain">{chain?.name ?? hoveredTx.chainId}</span>
+        <span className="hover-tooltip-time">{formatRelativeTime(hoveredTx.timestamp)}</span>
+      </div>
+      <div className="hover-tooltip-row">
+        <span className="hover-tooltip-value">
+          {safeValue} {valueUnit}
+          {usdValue && <span className="hover-tooltip-usd"> {usdValue}</span>}
+        </span>
+      </div>
+      <div className="hover-tooltip-row hover-tooltip-hash">
+        {truncateAddress(hoveredTx.hash)}
+      </div>
+      <div className="hover-tooltip-row hover-tooltip-addrs">
+        {truncateAddress(hoveredTx.from)} → {hoveredTx.to ? truncateAddress(hoveredTx.to) : 'Contract'}
       </div>
     </div>
   );
@@ -333,7 +397,7 @@ const StatsStrip = React.memo(function StatsStrip() {
               <span className="net-flow-arrow net-flow-out" title="Net sending">↓</span>
             )}
             <span className="stat-value">
-              {Math.abs(netFlow.received - netFlow.sent).toFixed(4)}
+              {formatHumanValue(Math.abs(netFlow.received - netFlow.sent))}
             </span>
             <span className="stat-label">NET</span>
           </div>
@@ -447,8 +511,10 @@ function linearToLog(t: number): number {
 }
 
 function formatUsd(value: number): string {
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  if (value >= 1) return `$${value.toFixed(2)}`;
   return `$${value.toLocaleString()}`;
 }
 
@@ -501,8 +567,8 @@ function GasEstimator() {
                 const nativePrice = tokenPrices[c.nativeCurrency];
                 const usdCost = nativePrice ? costEth * nativePrice : null;
                 return (
-                  <span key={c.id} className="gas-est-val" title={`${costEth.toFixed(6)} ${c.nativeCurrency}`}>
-                    {usdCost !== null ? (usdCost < 0.01 ? '<$0.01' : `$${usdCost.toFixed(2)}`) : (costEth < 0.0001 ? '<0.0001' : costEth.toFixed(4))}
+                  <span key={c.id} className="gas-est-val" title={`${formatHumanValue(costEth)} ${c.nativeCurrency}`}>
+                    {usdCost !== null ? (usdCost < 0.01 ? '<$0.01' : `$${formatHumanValue(usdCost)}`) : formatHumanValue(costEth)}
                   </span>
                 );
               })}
@@ -668,7 +734,7 @@ function WalletButton() {
       <button className="wallet-btn wallet-btn--connected" onClick={handleClick}>
         <span className="wallet-dot" />
         <span className="wallet-addr">{truncateAddress(address)}</span>
-        {balance && <span className="wallet-balance">{parseFloat(balance).toFixed(4)} ETH</span>}
+        {balance && <span className="wallet-balance">{formatHumanValue(parseFloat(balance))} ETH</span>}
       </button>
     );
   }
@@ -695,7 +761,7 @@ function WhaleHistoryItem({ record }: { record: WhaleRecord }) {
     >
       <span className="whale-history-dot" style={{ background: chain?.color.primary }} />
       <span className="whale-history-value">
-        {record.value.toFixed(2)} {record.tokenSymbol ?? chain?.nativeCurrency}
+        {formatHumanValue(record.value)} {record.tokenSymbol ?? chain?.nativeCurrency}
       </span>
       <span className="whale-history-addr">{truncateAddress(record.from)}</span>
       <span className="whale-history-time">{formatRelativeTime(record.timestamp)}</span>
@@ -810,10 +876,11 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
                   '--chain-color': chain?.color.primary ?? '#fff',
                 } as React.CSSProperties}
               >
+                <span className="whale-alert-icon">🐋</span>
                 <span className="whale-alert-chain-dot" style={{ background: chain?.color.primary }} />
                 <span className="whale-alert-chain-name">{chain?.abbr}</span>
                 <span className="whale-value">
-                  {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
+                  {formatHumanValue(whale.value)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
                 </span>
                 <span className="whale-alert-from">{truncateAddress(whale.from)}</span>
                 <span className="whale-alert-time">{formatRelativeTime(whale.timestamp)}</span>
@@ -838,10 +905,10 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
 
 function formatPortfolioUsd(value: number): string {
   if (value < 0.01) return '<$0.01';
-  if (value < 1_000) return `$${value.toFixed(2)}`;
-  if (value < 10_000) return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (value < 1_000_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(2)}`;
 }
 
 function PortfolioPanel() {
@@ -974,7 +1041,7 @@ function PortfolioPanel() {
                       >
                         <span className="portfolio-alloc-dot" style={{ background: chain?.color.primary }} />
                         <span className="portfolio-alloc-name">{chain?.name ?? chainId}</span>
-                        <span className="portfolio-alloc-pct">{pct.toFixed(0)}%</span>
+                        <span className="portfolio-alloc-pct">{Math.round(pct)}%</span>
                       </div>
                     );
                   })}
@@ -987,7 +1054,7 @@ function PortfolioPanel() {
                   <div className="portfolio-flow-item">
                     <span className="portfolio-flow-arrow portfolio-flow-in">&uarr;</span>
                     <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{netFlow.received.toFixed(4)}</span>
+                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.received)}</span>
                       <span className="portfolio-flow-label">Received</span>
                     </div>
                   </div>
@@ -995,7 +1062,7 @@ function PortfolioPanel() {
                   <div className="portfolio-flow-item">
                     <span className="portfolio-flow-arrow portfolio-flow-out">&darr;</span>
                     <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{netFlow.sent.toFixed(4)}</span>
+                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.sent)}</span>
                       <span className="portfolio-flow-label">Sent</span>
                     </div>
                   </div>
@@ -1032,13 +1099,7 @@ function PortfolioPanel() {
                         </div>
                         <div className="portfolio-item-bottom">
                           <span className="portfolio-balance">
-                            {item.balance < 0.01
-                              ? '<0.01'
-                              : item.balance < 1
-                                ? item.balance.toFixed(4)
-                                : item.balance < 10_000
-                                  ? item.balance.toFixed(2)
-                                  : item.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            {formatHumanValue(item.balance)}
                           </span>
                           {pct > 0 && (
                             <div className="portfolio-pct-track">
@@ -1049,7 +1110,7 @@ function PortfolioPanel() {
                             </div>
                           )}
                           {pct > 0 && (
-                            <span className="portfolio-pct-text">{pct.toFixed(0)}%</span>
+                            <span className="portfolio-pct-text">{Math.round(pct)}%</span>
                           )}
                         </div>
                       </div>
@@ -1341,6 +1402,9 @@ export function Overlay() {
       {inspectedTx && (
         <TxDetail tx={inspectedTx} onClose={handleCloseDetail} />
       )}
+
+      {/* Hover tooltip */}
+      <HoverTooltip />
     </div>
   );
 }

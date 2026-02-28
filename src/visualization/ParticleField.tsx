@@ -1,6 +1,7 @@
-import { useRef, useMemo, useCallback, useEffect } from 'react';
-import { useFrame, useThree, ThreeEvent } from '@react-three/fiber';
+import { useRef, useMemo, useEffect } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import type { InspectedTx } from '../stores/useStore';
 import { ParticlePool, TRAIL_LENGTH } from './ParticlePool';
 import { txQueue } from '../processing/TransactionQueue';
 import { queueWhaleEvent } from './whaleEvents';
@@ -112,78 +113,112 @@ export function ParticleField() {
     };
   }, [mainGeo, mainMat, trailGeo, trailMat]);
 
-  // Click/pointer handler for particle inspection
-  const handlePointerDown = useCallback(
-    (event: ThreeEvent<PointerEvent>) => {
+  // ── DOM-based pointer events (R3F events don't fire on <points> without threshold config) ──
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseVec = useRef(new THREE.Vector2());
+  const tmpVec = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    let lastMoveTime = 0;
+    let pointerDownPos: { x: number; y: number } | null = null;
+
+    function findNearest(clientX: number, clientY: number): InspectedTx | null {
       const pool = poolRef.current;
       const map = indexMapRef.current;
+      if (map.length === 0) return null;
 
-      // Use the intersection index from R3F raycasting
-      if (event.index !== undefined && event.index < map.length) {
-        const poolIdx = map[event.index];
-        const p = pool.particles[poolIdx];
-        if (p.active) {
-          useStore.getState().setInspectedTx({
-            hash: p.hash,
-            from: p.from,
-            to: p.to,
-            value: p.value,
-            gasPrice: p.gasPrice,
-            chainId: p.chainId,
-            timestamp: p.timestamp,
-            blockNumber: p.blockNumber,
-            screenX: event.clientX ?? event.nativeEvent.clientX,
-            screenY: event.clientY ?? event.nativeEvent.clientY,
-            tokenSymbol: p.tokenSymbol || undefined,
-            isStablecoin: p.isStablecoin || undefined,
-          });
-          event.stopPropagation();
-          return;
-        }
-      }
+      const rect = canvas.getBoundingClientRect();
+      mouseVec.current.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycasterRef.current.setFromCamera(mouseVec.current, camera);
+      const ray = raycasterRef.current.ray;
 
-      // Fallback: manual proximity check against camera ray
-      // Scale threshold by camera distance for consistent hit area
-      const ray = event.ray;
       const camDist = camera.position.length();
       const hitThreshold = 0.5 + camDist * 0.04;
-      const tmpVec = new THREE.Vector3();
       let closestDist = hitThreshold;
       let closestIdx = -1;
 
       for (let i = 0; i < map.length; i++) {
         const p = pool.particles[map[i]];
         if (!p.active) continue;
-        tmpVec.set(p.x, p.y, p.z);
-        const dist = ray.distanceToPoint(tmpVec);
+        tmpVec.current.set(p.x, p.y, p.z);
+        const dist = ray.distanceToPoint(tmpVec.current);
         if (dist < closestDist) {
           closestDist = dist;
           closestIdx = i;
         }
       }
 
-      if (closestIdx >= 0) {
-        const p = pool.particles[map[closestIdx]];
-        useStore.getState().setInspectedTx({
-          hash: p.hash,
-          from: p.from,
-          to: p.to,
-          value: p.value,
-          gasPrice: p.gasPrice,
-          chainId: p.chainId,
-          timestamp: p.timestamp,
-          blockNumber: p.blockNumber,
-          screenX: event.clientX ?? event.nativeEvent.clientX,
-          screenY: event.clientY ?? event.nativeEvent.clientY,
-          tokenSymbol: p.tokenSymbol || undefined,
-          isStablecoin: p.isStablecoin || undefined,
-        });
-      } else {
-        useStore.getState().setInspectedTx(null);
+      if (closestIdx < 0) return null;
+      const p = pool.particles[map[closestIdx]];
+      return {
+        hash: p.hash,
+        from: p.from,
+        to: p.to,
+        value: p.value,
+        gasPrice: p.gasPrice,
+        chainId: p.chainId,
+        timestamp: p.timestamp,
+        blockNumber: p.blockNumber,
+        screenX: clientX,
+        screenY: clientY,
+        tokenSymbol: p.tokenSymbol || undefined,
+        isStablecoin: p.isStablecoin || undefined,
+      };
+    }
+
+    function onPointerDown(e: PointerEvent) {
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      // Only treat as click if pointer didn't move much (distinguishes from orbit drag)
+      if (pointerDownPos) {
+        const dx = e.clientX - pointerDownPos.x;
+        const dy = e.clientY - pointerDownPos.y;
+        if (dx * dx + dy * dy < TOUCH_TAP_THRESHOLD * TOUCH_TAP_THRESHOLD) {
+          const hit = findNearest(e.clientX, e.clientY);
+          useStore.getState().setInspectedTx(hit);
+        }
       }
-    },
-    [camera],
-  );
+      pointerDownPos = null;
+    }
+
+    function onPointerMove(e: PointerEvent) {
+      // Skip hover on touch devices
+      if (e.pointerType === 'touch') return;
+
+      const now = performance.now();
+      if (now - lastMoveTime < 50) return;
+      lastMoveTime = now;
+
+      // Don't show tooltip when full panel is open
+      if (useStore.getState().inspectedTx) return;
+
+      const hit = findNearest(e.clientX, e.clientY);
+      useStore.getState().setHoveredTx(hit);
+      canvas.style.cursor = hit ? 'pointer' : '';
+    }
+
+    function onPointerLeave() {
+      useStore.getState().setHoveredTx(null);
+      canvas.style.cursor = '';
+    }
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerleave', onPointerLeave);
+    return () => {
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
+    };
+  }, [gl, camera]);
 
   useFrame((state, delta) => {
     const pool = poolRef.current;
@@ -391,11 +426,7 @@ export function ParticleField() {
   return (
     <>
       <points geometry={trailGeo} material={trailMat} />
-      <points
-        geometry={mainGeo}
-        material={mainMat}
-        onPointerDown={handlePointerDown}
-      />
+      <points geometry={mainGeo} material={mainMat} />
     </>
   );
 }

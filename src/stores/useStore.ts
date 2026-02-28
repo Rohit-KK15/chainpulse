@@ -78,6 +78,9 @@ interface AppState {
   inspectedTx: InspectedTx | null;
   setInspectedTx: (tx: InspectedTx | null) => void;
 
+  hoveredTx: InspectedTx | null;
+  setHoveredTx: (tx: InspectedTx | null) => void;
+
   whaleThresholdUsd: number;
   setWhaleThresholdUsd: (v: number) => void;
 
@@ -245,6 +248,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   inspectedTx: null,
   setInspectedTx: (tx) => set({ inspectedTx: tx }),
+
+  hoveredTx: null,
+  setHoveredTx: (tx) => set({ hoveredTx: tx }),
 
   whaleThresholdUsd: prefs.whaleThresholdUsd,
   setWhaleThresholdUsd: (v) => {

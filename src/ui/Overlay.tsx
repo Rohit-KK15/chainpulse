@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStore, InspectedTx, WhaleRecord } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
+import { walletManager } from '../wallet/WalletManager';
+import { useENSName } from '../utils/ensCache';
 
 // ── Clipboard helper ───────────────────────────
 
@@ -112,6 +114,8 @@ function formatRelativeTime(timestamp: number): string {
 function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   const chain = CHAINS[tx.chainId];
   const panelRef = useRef<HTMLDivElement>(null);
+  const fromENS = useENSName(tx.from);
+  const toENS = useENSName(tx.to);
 
   // Position the panel near the click, clamped to viewport using visualViewport
   const vw = window.visualViewport?.width ?? document.documentElement.clientWidth;
@@ -162,9 +166,11 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
         <button className="detail-close" onClick={onClose}>x</button>
       </div>
       <CopyField label="Hash" value={tx.hash} mono />
-      <CopyField label="From" value={tx.from} mono />
+      {fromENS && <div className="detail-row"><span className="detail-label">From</span><span className="detail-value detail-ens">{fromENS}</span></div>}
+      <CopyField label={fromENS ? '' : 'From'} value={tx.from} mono />
+      {toENS && <div className="detail-row"><span className="detail-label">To</span><span className="detail-value detail-ens">{toENS}</span></div>}
       <CopyField
-        label="To"
+        label={toENS ? '' : 'To'}
         value={tx.to ?? 'Contract Creation'}
         mono={!!tx.to}
       />
@@ -430,6 +436,58 @@ const InfoButton = React.memo(function InfoButton({ onClick }: { onClick: () => 
   );
 });
 
+const GAS_ESTIMATES = [
+  { label: 'ETH Transfer', gas: 21_000 },
+  { label: 'ERC-20 Transfer', gas: 65_000 },
+  { label: 'DEX Swap', gas: 150_000 },
+  { label: 'NFT Mint', gas: 100_000 },
+];
+
+function GasEstimator() {
+  const avgGasPerChain = useStore((s) => s.avgGasPerChain);
+  const chains = Object.values(CHAINS);
+
+  // Only show if we have gas data for at least one chain
+  const hasData = chains.some((c) => avgGasPerChain[c.id] !== undefined);
+  if (!hasData) return null;
+
+  return (
+    <>
+      <div className="info-divider" />
+      <div className="info-section">
+        <div className="info-slider-header">
+          <span>Gas Estimates</span>
+        </div>
+        <div className="gas-estimator">
+          <div className="gas-est-header">
+            <span className="gas-est-label-col">Type</span>
+            {chains.map((c) => (
+              <span key={c.id} className="gas-est-chain" style={{ color: c.color.primary }}>{c.abbr}</span>
+            ))}
+          </div>
+          {GAS_ESTIMATES.map((est) => (
+            <div key={est.label} className="gas-est-row">
+              <span className="gas-est-label-col">{est.label}</span>
+              {chains.map((c) => {
+                const gasPrice = avgGasPerChain[c.id];
+                if (gasPrice === undefined) return <span key={c.id} className="gas-est-val">--</span>;
+                const costGwei = gasPrice * est.gas;
+                const costEth = costGwei / 1e9;
+                return (
+                  <span key={c.id} className="gas-est-val">
+                    {costEth < 0.0001 ? '<0.0001' : costEth.toFixed(4)}
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <div className="info-slider-note">Cost in native token ({chains.map((c) => c.nativeCurrency).filter((v, i, a) => a.indexOf(v) === i).join('/')})</div>
+      </div>
+    </>
+  );
+}
+
 function InfoPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
@@ -540,7 +598,57 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
           <span>$1M</span>
         </div>
       </div>
+
+      <GasEstimator />
     </div>
+  );
+}
+
+// ── Wallet Button ─────────────────────────────
+
+function WalletButton() {
+  const isConnected = useStore((s) => s.isWalletConnected);
+  const address = useStore((s) => s.walletAddress);
+  const balance = useStore((s) => s.walletBalance);
+  const [connecting, setConnecting] = useState(false);
+
+  useEffect(() => {
+    walletManager.subscribe((state) => {
+      if (state) {
+        useStore.getState().setWalletState(state.address, state.chainId, state.balance);
+      } else {
+        useStore.getState().setWalletState(null, null, null);
+      }
+    });
+    walletManager.tryAutoConnect();
+  }, []);
+
+  const handleClick = async () => {
+    if (isConnected) {
+      walletManager.disconnect();
+    } else {
+      setConnecting(true);
+      await walletManager.connect();
+      setConnecting(false);
+    }
+  };
+
+  if (isConnected && address) {
+    return (
+      <button className="wallet-btn wallet-btn--connected" onClick={handleClick}>
+        <span className="wallet-dot" />
+        <span className="wallet-addr">{truncateAddress(address)}</span>
+        {balance && <span className="wallet-balance">{parseFloat(balance).toFixed(4)} ETH</span>}
+      </button>
+    );
+  }
+
+  if (!walletManager.isAvailable) return null;
+
+  return (
+    <button className="wallet-btn" onClick={handleClick} disabled={connecting}>
+      {connecting ? 'Connecting...' : 'Connect Wallet'}
+    </button>
   );
 }
 
@@ -735,6 +843,7 @@ export function Overlay() {
           <span className="logo-text">ChainPulse</span>
         </div>
 
+        <div className="header-right">
         <div className="chain-selector">
           <button
             className={`chain-btn ${focusedChain === null ? 'active' : ''}`}
@@ -761,6 +870,8 @@ export function Overlay() {
               {chain.name}
             </button>
           ))}
+        </div>
+        <WalletButton />
         </div>
       </div>
 

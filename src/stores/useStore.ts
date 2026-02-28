@@ -80,6 +80,17 @@ interface AppState {
 
   whaleThresholdUsd: number;
   setWhaleThresholdUsd: (v: number) => void;
+
+  // Wallet
+  walletAddress: string | null;
+  walletChainId: number | null;
+  walletBalance: string | null;
+  isWalletConnected: boolean;
+  setWalletState: (address: string | null, chainId: number | null, balance: string | null) => void;
+
+  // Audio
+  audioEnabled: boolean;
+  setAudioEnabled: (v: boolean) => void;
 }
 
 const MAX_RECENT_WHALES = 5;
@@ -223,4 +234,21 @@ export const useStore = create<AppState>((set, get) => ({
     set({ whaleThresholdUsd: v });
     savePrefs({ isSimulation: get().isSimulation, whaleHistory: get().whaleHistory, whaleThresholdUsd: v });
   },
+
+  // Wallet
+  walletAddress: null,
+  walletChainId: null,
+  walletBalance: null,
+  isWalletConnected: false,
+  setWalletState: (address, chainId, balance) =>
+    set({
+      walletAddress: address,
+      walletChainId: chainId,
+      walletBalance: balance,
+      isWalletConnected: address !== null,
+    }),
+
+  // Audio
+  audioEnabled: false,
+  setAudioEnabled: (v) => set({ audioEnabled: v }),
 }));

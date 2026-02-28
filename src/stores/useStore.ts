@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ProcessedTransaction } from '../data/types';
+import { CHAINS } from '../config/chains';
 
 export interface InspectedTx {
   hash: string;
@@ -9,9 +10,11 @@ export interface InspectedTx {
   gasPrice: number;
   chainId: string;
   timestamp: number;
+  blockNumber: number;
   screenX: number;
   screenY: number;
   tokenSymbol?: string;
+  isStablecoin?: boolean;
 }
 
 export interface WhaleRecord {
@@ -20,11 +23,16 @@ export interface WhaleRecord {
   value: number;
   timestamp: number;
   tokenSymbol?: string;
+  from: string;
+  to: string | null;
 }
 
 interface AppState {
   focusedChain: string | null;
   setFocusedChain: (chain: string | null) => void;
+
+  cameraTarget: [number, number, number];
+  cameraDistance: number;
 
   isSimulation: boolean;
   setSimulation: (sim: boolean) => void;
@@ -49,11 +57,16 @@ interface AppState {
   resetTxCount: () => void;
 
   latestBlocks: Record<string, number>;
+  lastBlockTimestamps: Record<string, number>;
   setLatestBlock: (chainId: string, block: number) => void;
 
   gasPrices: number[];
   avgGas: number;
   addGasPrices: (prices: number[]) => void;
+
+  gasPricesPerChain: Record<string, number[]>;
+  avgGasPerChain: Record<string, number>;
+  addChainGasPrices: (chainId: string, prices: number[]) => void;
 
   recentWhales: ProcessedTransaction[];
   addWhale: (tx: ProcessedTransaction) => void;
@@ -67,9 +80,36 @@ interface AppState {
 
   whaleThresholdUsd: number;
   setWhaleThresholdUsd: (v: number) => void;
+
+  // Wallet
+  walletAddress: string | null;
+  walletChainId: number | null;
+  walletBalance: string | null;
+  isWalletConnected: boolean;
+  setWalletState: (address: string | null, chainId: number | null, balance: string | null) => void;
+
+  // Net flow tracking (when wallet connected)
+  netFlow: { sent: number; received: number };
+  addNetFlow: (direction: 'sent' | 'received', amount: number) => void;
+  resetNetFlow: () => void;
+
+  // Portfolio
+  portfolio: { symbol: string; balance: number; chain: string; color: string }[];
+  portfolioVisible: boolean;
+  setPortfolio: (p: { symbol: string; balance: number; chain: string; color: string }[]) => void;
+  setPortfolioVisible: (v: boolean) => void;
+
+  // Audio
+  audioEnabled: boolean;
+  setAudioEnabled: (v: boolean) => void;
+
+  // Token prices
+  tokenPrices: Record<string, number>;
+  setTokenPrices: (prices: Record<string, number>) => void;
+
 }
 
-const MAX_RECENT_WHALES = 5;
+const MAX_RECENT_WHALES = 6;
 const MAX_GAS_SAMPLES = 100;
 const MAX_WHALE_HISTORY = 50;
 
@@ -104,7 +144,16 @@ const prefs = loadPrefs();
 
 export const useStore = create<AppState>((set, get) => ({
   focusedChain: null,
-  setFocusedChain: (chain) => set({ focusedChain: chain }),
+  setFocusedChain: (chain) => {
+    const target: [number, number, number] = chain
+      ? (CHAINS[chain]?.center ?? [0, 0, 0])
+      : [0, 0, 0];
+    const distance = chain ? 16 : 22;
+    set({ focusedChain: chain, cameraTarget: target, cameraDistance: distance });
+  },
+
+  cameraTarget: [0, 0, 0],
+  cameraDistance: 22,
 
   isSimulation: prefs.isSimulation,
   setSimulation: (sim) => {
@@ -135,9 +184,11 @@ export const useStore = create<AppState>((set, get) => ({
   resetTxCount: () => set({ txCount: 0 }),
 
   latestBlocks: {},
+  lastBlockTimestamps: {},
   setLatestBlock: (chainId, block) =>
     set((s) => ({
       latestBlocks: { ...s.latestBlocks, [chainId]: block },
+      lastBlockTimestamps: { ...s.lastBlockTimestamps, [chainId]: Date.now() },
     })),
 
   gasPrices: [],
@@ -153,6 +204,21 @@ export const useStore = create<AppState>((set, get) => ({
       return { gasPrices: updated, avgGas: avg };
     }),
 
+  gasPricesPerChain: {},
+  avgGasPerChain: {},
+  addChainGasPrices: (chainId, prices) =>
+    set((s) => {
+      const valid = prices.filter((p) => Number.isFinite(p));
+      if (valid.length === 0) return s;
+      const existing = s.gasPricesPerChain[chainId] ?? [];
+      const updated = [...existing, ...valid].slice(-MAX_GAS_SAMPLES);
+      const avg = updated.reduce((a, b) => a + b, 0) / updated.length;
+      return {
+        gasPricesPerChain: { ...s.gasPricesPerChain, [chainId]: updated },
+        avgGasPerChain: { ...s.avgGasPerChain, [chainId]: avg },
+      };
+    }),
+
   recentWhales: [],
   addWhale: (tx) =>
     set((s) => {
@@ -162,11 +228,14 @@ export const useStore = create<AppState>((set, get) => ({
         value: tx.value,
         timestamp: tx.timestamp,
         tokenSymbol: tx.tokenInfo?.symbol,
+        from: tx.from,
+        to: tx.to,
       };
       const history = [record, ...s.whaleHistory].slice(0, MAX_WHALE_HISTORY);
       savePrefs({ isSimulation: get().isSimulation, whaleHistory: history, whaleThresholdUsd: get().whaleThresholdUsd });
+      const dedupedWhales = s.recentWhales.filter((w) => w.hash !== tx.hash);
       return {
-        recentWhales: [tx, ...s.recentWhales].slice(0, MAX_RECENT_WHALES),
+        recentWhales: [tx, ...dedupedWhales].slice(0, MAX_RECENT_WHALES),
         whaleHistory: history,
       };
     }),
@@ -182,4 +251,43 @@ export const useStore = create<AppState>((set, get) => ({
     set({ whaleThresholdUsd: v });
     savePrefs({ isSimulation: get().isSimulation, whaleHistory: get().whaleHistory, whaleThresholdUsd: v });
   },
+
+  // Wallet
+  walletAddress: null,
+  walletChainId: null,
+  walletBalance: null,
+  isWalletConnected: false,
+  setWalletState: (address, chainId, balance) =>
+    set({
+      walletAddress: address,
+      walletChainId: chainId,
+      walletBalance: balance,
+      isWalletConnected: address !== null,
+    }),
+
+  // Net flow
+  netFlow: { sent: 0, received: 0 },
+  addNetFlow: (direction, amount) =>
+    set((s) => ({
+      netFlow: {
+        sent: s.netFlow.sent + (direction === 'sent' ? amount : 0),
+        received: s.netFlow.received + (direction === 'received' ? amount : 0),
+      },
+    })),
+  resetNetFlow: () => set({ netFlow: { sent: 0, received: 0 } }),
+
+  // Portfolio
+  portfolio: [],
+  portfolioVisible: false,
+  setPortfolio: (p) => set({ portfolio: p }),
+  setPortfolioVisible: (v) => set({ portfolioVisible: v }),
+
+  // Audio
+  audioEnabled: false,
+  setAudioEnabled: (v) => set({ audioEnabled: v }),
+
+  // Token prices
+  tokenPrices: {},
+  setTokenPrices: (prices) => set({ tokenPrices: prices }),
+
 }));

@@ -50,8 +50,10 @@ export interface ParticleData {
   to: string | null;
   value: number;
   gasPrice: number;
+  blockNumber: number;
   timestamp: number;
   tokenSymbol: string;
+  isStablecoin: boolean;
 }
 
 export interface SpawnConfig {
@@ -76,8 +78,10 @@ export interface SpawnConfig {
   value: number;
   whaleValue: number;
   gasPrice: number;
+  blockNumber: number;
   timestamp: number;
   tokenSymbol: string;
+  isStablecoin: boolean;
 }
 
 export class ParticlePool {
@@ -116,8 +120,8 @@ export class ParticlePool {
       trailFill: 0,
       trailTimer: 0,
       hash: '', from: '', to: null,
-      value: 0, gasPrice: 0, timestamp: 0,
-      tokenSymbol: '',
+      value: 0, gasPrice: 0, blockNumber: 0, timestamp: 0,
+      tokenSymbol: '', isStablecoin: false,
     };
   }
 
@@ -167,8 +171,10 @@ export class ParticlePool {
     p.to = config.to;
     p.value = config.value;
     p.gasPrice = config.gasPrice;
+    p.blockNumber = config.blockNumber;
     p.timestamp = config.timestamp;
     p.tokenSymbol = config.tokenSymbol;
+    p.isStablecoin = config.isStablecoin;
 
     for (let t = 0; t < TRAIL_LENGTH; t++) {
       p.trailX[t] = config.x;

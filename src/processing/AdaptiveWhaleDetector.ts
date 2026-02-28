@@ -1,5 +1,6 @@
 import { CHAINS } from '../config/chains';
 import { getTokenWhaleThreshold } from '../config/tokenRegistry';
+import { getCachedPrice } from '../data/PriceFeed';
 import { useStore } from '../stores/useStore';
 
 const STABLECOIN_SYMBOLS = new Set(['USDT', 'USDC', 'DAI']);
@@ -73,18 +74,25 @@ class AdaptiveWhaleDetectorImpl {
   }
 
   /** Apply user-set USD whale threshold as a floor.
-   *  For stablecoins: USD value ≈ face value, so threshold applies directly.
-   *  For non-stablecoins / native: no price feed, threshold left unchanged. */
-  private applyUserFloor(threshold: number, _chainId: string, tokenSymbol?: string): number {
+   *  Converts the USD threshold to token units using the cached price feed. */
+  private applyUserFloor(threshold: number, chainId: string, tokenSymbol?: string): number {
     const userUsd = useStore.getState().whaleThresholdUsd;
     if (userUsd <= 0) return threshold;
 
     if (tokenSymbol && STABLECOIN_SYMBOLS.has(tokenSymbol)) {
-      // 1 token ≈ $1, so USD threshold maps directly to token amount
       return Math.max(threshold, userUsd);
     }
 
-    // Native currency / non-stablecoin: no price feed, keep existing threshold
+    // For non-stablecoins and native currencies, convert USD to token amount via price feed
+    const symbol = tokenSymbol ?? CHAINS[chainId]?.nativeCurrency;
+    if (symbol) {
+      const price = getCachedPrice(symbol);
+      if (price && price > 0) {
+        const tokenThreshold = userUsd / price;
+        return Math.max(threshold, tokenThreshold);
+      }
+    }
+
     return threshold;
   }
 

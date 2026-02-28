@@ -11,13 +11,20 @@ import { activityMonitor } from '../processing/ActivityMonitor';
 import { drainBlockPulses } from './blockPulseEvents';
 import { particleVertexShader, particleFragmentShader } from './shaders';
 
-const MAX_PARTICLES = 600;
+// Reduce particle count on low-end / mobile devices
+const IS_LOW_END = typeof navigator !== 'undefined' && (
+  navigator.hardwareConcurrency <= 4 || ('ontouchstart' in window && window.innerWidth < 768)
+);
+const MAX_PARTICLES = IS_LOW_END ? 300 : 600;
 const MAX_TRAIL_POINTS = MAX_PARTICLES * TRAIL_LENGTH;
-const DRAIN_PER_FRAME = 6;
+const SPREAD_WINDOW = 0.5;   // drain any queue buildup over ~0.5 seconds
+const MIN_DRAIN_RATE = 2.0;  // floor prevents zero-spawn gaps between ticks
+const MAX_PER_FRAME = IS_LOW_END ? 8 : 12;  // cap to prevent frame drops
 const SPAWN_RADIUS = 3.5;
 const PULSE_NUDGE_RADIUS = 5;
 const PULSE_NUDGE_STRENGTH = 0.1;
 const PULSE_NUDGE_DURATION = 2.0;
+const TOUCH_TAP_THRESHOLD = 10; // px — touch moves within this are taps, not drags
 
 interface ActivePulse {
   cx: number; cy: number; cz: number;
@@ -95,7 +102,17 @@ export function ParticleField() {
     return { trailGeo: geo, trailMat: mat };
   }, [gl]);
 
-  // Click/pointer handler for particle inspection (#8 + #14)
+  // Dispose GPU resources on unmount
+  useEffect(() => {
+    return () => {
+      mainGeo.dispose();
+      mainMat.dispose();
+      trailGeo.dispose();
+      trailMat.dispose();
+    };
+  }, [mainGeo, mainMat, trailGeo, trailMat]);
+
+  // Click/pointer handler for particle inspection
   const handlePointerDown = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
       const pool = poolRef.current;
@@ -114,9 +131,11 @@ export function ParticleField() {
             gasPrice: p.gasPrice,
             chainId: p.chainId,
             timestamp: p.timestamp,
+            blockNumber: p.blockNumber,
             screenX: event.clientX ?? event.nativeEvent.clientX,
             screenY: event.clientY ?? event.nativeEvent.clientY,
             tokenSymbol: p.tokenSymbol || undefined,
+            isStablecoin: p.isStablecoin || undefined,
           });
           event.stopPropagation();
           return;
@@ -153,9 +172,11 @@ export function ParticleField() {
           gasPrice: p.gasPrice,
           chainId: p.chainId,
           timestamp: p.timestamp,
+          blockNumber: p.blockNumber,
           screenX: event.clientX ?? event.nativeEvent.clientX,
           screenY: event.clientY ?? event.nativeEvent.clientY,
           tokenSymbol: p.tokenSymbol || undefined,
+          isStablecoin: p.isStablecoin || undefined,
         });
       } else {
         useStore.getState().setInspectedTx(null);
@@ -174,7 +195,10 @@ export function ParticleField() {
     transitionOpacity.current += (targetOpacity - transitionOpacity.current) * Math.min(delta * 5, 1);
 
     // Drain queued transactions and spawn particles at chain cluster positions
-    const batch = txQueue.drain(DRAIN_PER_FRAME);
+    const queueSize = txQueue.size;
+    const targetRate = Math.max(queueSize / SPREAD_WINDOW, MIN_DRAIN_RATE);
+    const spawnsThisFrame = Math.min(Math.ceil(targetRate * delta), MAX_PER_FRAME);
+    const batch = txQueue.drain(spawnsThisFrame);
     for (const tx of batch) {
       const chainCenter = CHAINS[tx.chainId]?.center ?? [0, 0, 0];
       const personality = getPersonality(tx.chainId);
@@ -225,8 +249,10 @@ export function ParticleField() {
         value: tx.value,
         whaleValue,
         gasPrice: tx.gasPrice,
+        blockNumber: tx.blockNumber,
         timestamp: tx.timestamp,
         tokenSymbol: tx.tokenInfo?.symbol ?? '',
+        isStablecoin: tx.tokenInfo?.isStablecoin ?? false,
       });
 
       // Value spectrum: modulate initial energy by transaction intensity
@@ -353,7 +379,6 @@ export function ParticleField() {
     trailGeo.attributes.color.needsUpdate = true;
     (trailGeo.attributes.aSize as THREE.BufferAttribute).needsUpdate = true;
     (trailGeo.attributes.aOpacity as THREE.BufferAttribute).needsUpdate = true;
-    (trailGeo.attributes.aEnergy as THREE.BufferAttribute).needsUpdate = true;
     (trailGeo.attributes.aIsWhale as THREE.BufferAttribute).needsUpdate = true;
     trailGeo.setDrawRange(0, trailCount);
 

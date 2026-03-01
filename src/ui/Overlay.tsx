@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore, InspectedTx, WhaleRecord } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
-import { walletManager } from '../wallet/WalletManager';
 import { useENSName } from '../utils/ensCache';
-import { soundEngine } from '../audio/SoundEngine';
-import { fetchPortfolio } from '../wallet/PortfolioTracker';
 import { sceneCanvas } from '../visualization/Scene';
 import { fetchPrices, formatUsdValue } from '../data/PriceFeed';
 import { POPULAR_SYMBOLS, getChainTokens } from '../config/tokenRegistry';
@@ -335,9 +332,9 @@ const LoadingIndicator = React.memo(function LoadingIndicator() {
 const TxCounter = React.memo(function TxCounter() {
   const txCount = useStore((s) => s.txCount);
   return (
-    <div className="hud-item">
-      <span className="hud-label">Total TX</span>
-      <span className="hud-value">{txCount.toLocaleString()}</span>
+    <div className="toolbar-stat">
+      <span className="toolbar-stat-value">{txCount.toLocaleString()}</span>
+      <span className="toolbar-stat-label">tx</span>
     </div>
   );
 });
@@ -400,42 +397,80 @@ const StatsStrip = React.memo(function StatsStrip() {
   );
 });
 
-// ── Mode Toggle ────────────────────────────────
+// ── Mode Indicator / Toggle ───────────────────
 
-function ModeToggle() {
+const IS_DEV = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
+
+function ModeIndicator() {
   const isSimulation = useStore((s) => s.isSimulation);
   const setSimulation = useStore((s) => s.setSimulation);
   const [confirming, setConfirming] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleClick = () => {
-    if (confirming) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      setConfirming(false);
-      setSimulation(!isSimulation);
-    } else {
-      setConfirming(true);
-      timerRef.current = setTimeout(() => setConfirming(false), 2000);
-    }
-  };
-
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
+  // Dev mode: clickable toggle
+  if (IS_DEV) {
+    const handleClick = () => {
+      if (confirming) {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setConfirming(false);
+        setSimulation(!isSimulation);
+      } else {
+        setConfirming(true);
+        timerRef.current = setTimeout(() => setConfirming(false), 2000);
+      }
+    };
+
+    return (
+      <button
+        className={`mode-indicator ${confirming ? 'mode-indicator--confirm' : isSimulation ? 'mode-indicator--sim' : 'mode-indicator--live'}`}
+        onClick={handleClick}
+      >
+        <span className="mode-dot" />
+        {confirming ? 'Confirm?' : isSimulation ? 'Sim' : 'Live'}
+      </button>
+    );
+  }
+
+  // Production: always live, read-only indicator
   return (
-    <button
-      className={`mode-toggle ${confirming ? 'mode-toggle--confirm' : ''}`}
-      onClick={handleClick}
-    >
-      {confirming
-        ? 'Click to confirm'
-        : isSimulation
-          ? 'Go Live'
-          : 'Simulate'}
-    </button>
+    <div className="mode-indicator mode-indicator--live">
+      <span className="mode-dot" />
+      Live
+    </div>
+  );
+}
+
+// ── Whale Threshold (compact inline slider) ───
+
+function WhaleThresholdSlider() {
+  const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
+  const setWhaleThresholdUsd = useStore((s) => s.setWhaleThresholdUsd);
+  const sliderValue = whaleThresholdUsd > 0 ? logToLinear(whaleThresholdUsd) : 0;
+
+  return (
+    <div className="whale-slider-compact">
+      <span className="whale-slider-label" title="Minimum USD value for whale alerts">🐋</span>
+      <input
+        type="range"
+        className="whale-slider-input"
+        min={0}
+        max={1}
+        step={0.001}
+        value={sliderValue}
+        title={whaleThresholdUsd > 0 ? `Whale threshold: ${formatUsd(whaleThresholdUsd)}` : 'Whale threshold: Auto'}
+        onChange={(e) => {
+          const t = parseFloat(e.target.value);
+          setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
+        }}
+      />
+      <span className="whale-slider-value">
+        {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
+      </span>
+    </div>
   );
 }
 
@@ -447,11 +482,14 @@ const CHAIN_LEGEND = Object.values(CHAINS).map((c) => ({
 }));
 
 const TOKEN_LEGEND = [
+  { symbol: 'ETH', color: '#627EEA' },
+  { symbol: 'MATIC', color: '#8247E5' },
+  { symbol: 'AVAX', color: '#E84142' },
+  { symbol: 'BNB', color: '#F0B90B' },
   { symbol: 'USDC', color: '#2775CA' },
   { symbol: 'USDT', color: '#26A17B' },
-  { symbol: 'DAI', color: '#F5AC37' },
-  { symbol: 'WETH', color: '#EC1C79' },
-  { symbol: 'WBTC', color: '#F7931A' },
+  { symbol: 'UNI', color: '#FF007A' },
+  { symbol: 'LINK', color: '#2A5ADA' },
 ];
 
 const SLIDER_MIN = 1_000;
@@ -492,18 +530,14 @@ const GAS_TYPES = [
   { label: 'Mint', gas: 100_000 },
 ];
 
-type InfoTab = 'guide' | 'gas' | 'settings';
+type InfoTab = 'guide' | 'gas';
 
 function InfoPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<InfoTab>('guide');
-  const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
-  const setWhaleThresholdUsd = useStore((s) => s.setWhaleThresholdUsd);
   const avgGasPerChain = useStore((s) => s.avgGasPerChain);
   const tokenPrices = useStore((s) => s.tokenPrices);
   const enabledChains = useStore((s) => s.enabledChains);
-
-  const sliderValue = whaleThresholdUsd > 0 ? logToLinear(whaleThresholdUsd) : 0;
 
   const chains = useMemo(
     () => Object.values(CHAINS).filter((c) => enabledChains.has(c.id)),
@@ -543,10 +577,6 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           Gas
         </button>
-        <button className={`ip-tab ${tab === 'settings' ? 'on' : ''}`} onClick={() => setTab('settings')}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
-        </button>
         <button className="ip-close" onClick={onClose}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -573,6 +603,18 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 15l-2 5L9 9l11 4-5 2z"/></svg>
               </span>
               <span>Click any particle to inspect</span>
+            </div>
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </span>
+              <span>Arcs show cross-chain bridge transfers</span>
+            </div>
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              </span>
+              <span>Toggle chains & tokens to filter the view</span>
             </div>
           </div>
 
@@ -641,88 +683,7 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {/* ── Settings tab ── */}
-      {tab === 'settings' && (
-        <div className="ip-body">
-          <div className="ip-setting">
-            <div className="ip-setting-header">
-              <span className="ip-setting-label">Whale Threshold</span>
-              <span className="ip-setting-value">
-                {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
-              </span>
-            </div>
-            <div className="ip-setting-note">Minimum USD value for whale alerts on stablecoins</div>
-            <input
-              type="range"
-              className="ip-slider"
-              min={0}
-              max={1}
-              step={0.001}
-              value={sliderValue}
-              onChange={(e) => {
-                const t = parseFloat(e.target.value);
-                setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
-              }}
-            />
-            <div className="ip-slider-labels">
-              <span>Auto</span>
-              <span>$10K</span>
-              <span>$100K</span>
-              <span>$1M</span>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
-  );
-}
-
-// ── Wallet Button ─────────────────────────────
-
-function WalletButton() {
-  const isConnected = useStore((s) => s.isWalletConnected);
-  const address = useStore((s) => s.walletAddress);
-  const balance = useStore((s) => s.walletBalance);
-  const [connecting, setConnecting] = useState(false);
-
-  useEffect(() => {
-    const unsub = walletManager.subscribe((state) => {
-      if (state) {
-        useStore.getState().setWalletState(state.address, state.chainId, state.balance);
-      } else {
-        useStore.getState().setWalletState(null, null, null);
-      }
-    });
-    walletManager.tryAutoConnect();
-    return unsub;
-  }, []);
-
-  const handleClick = async () => {
-    if (isConnected) {
-      walletManager.disconnect();
-    } else {
-      setConnecting(true);
-      await walletManager.connect();
-      setConnecting(false);
-    }
-  };
-
-  if (isConnected && address) {
-    return (
-      <button className="wallet-btn wallet-btn--connected" onClick={handleClick}>
-        <span className="wallet-dot" />
-        <span className="wallet-addr">{truncateAddress(address)}</span>
-        {balance && <span className="wallet-balance">{formatHumanValue(parseFloat(balance))} ETH</span>}
-      </button>
-    );
-  }
-
-  if (!walletManager.isAvailable) return null;
-
-  return (
-    <button className="wallet-btn" onClick={handleClick} disabled={connecting}>
-      {connecting ? 'Connecting...' : 'Connect Wallet'}
-    </button>
   );
 }
 
@@ -872,277 +833,16 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
         onClick={() => setHistoryOpen((prev) => !prev)}
         title="Whale history"
       >
-        🐋
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+        History
       </button>
       {historyOpen && <WhaleHistoryPanel onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }
-
-// ── Portfolio Panel ───────────────────────────
-
-function formatPortfolioUsd(value: number): string {
-  if (value < 0.01) return '<$0.01';
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(2)}`;
-}
-
-function PortfolioPanel() {
-  const isWalletConnected = useStore((s) => s.isWalletConnected);
-  const walletAddress = useStore((s) => s.walletAddress);
-  const portfolio = useStore((s) => s.portfolio);
-  const portfolioVisible = useStore((s) => s.portfolioVisible);
-  const tokenPrices = useStore((s) => s.tokenPrices);
-  const netFlow = useStore((s) => s.netFlow);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isWalletConnected || !walletAddress) return;
-    let cancelled = false;
-    setLoading(true);
-    fetchPortfolio(walletAddress)
-      .then((balances) => {
-        if (!cancelled) useStore.getState().setPortfolio(balances);
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [isWalletConnected, walletAddress]);
-
-  if (!isWalletConnected) return null;
-
-  const toggleVisible = () => useStore.getState().setPortfolioVisible(!portfolioVisible);
-
-  // Enrich portfolio items with USD values
-  const enriched = portfolio.map((item) => {
-    const price = tokenPrices[item.symbol] ?? 0;
-    const usdValue = item.balance * price;
-    return { ...item, usdValue };
-  });
-
-  const totalUsd = enriched.reduce((sum, item) => sum + item.usdValue, 0);
-
-  // Chain allocation totals
-  const chainTotals: Record<string, number> = {};
-  for (const item of enriched) {
-    chainTotals[item.chain] = (chainTotals[item.chain] ?? 0) + item.usdValue;
-  }
-
-  // Sort by USD value descending
-  const sorted = [...enriched].sort((a, b) => b.usdValue - a.usdValue);
-
-  // Build conic-gradient for ring chart
-  const chainEntries = Object.entries(chainTotals)
-    .filter(([, v]) => v > 0)
-    .sort(([, a], [, b]) => b - a);
-
-  let conicGradient = '';
-  if (totalUsd > 0 && chainEntries.length > 0) {
-    const segments: string[] = [];
-    let cumulative = 0;
-    for (const [chainId, value] of chainEntries) {
-      const chain = CHAINS[chainId];
-      const pct = (value / totalUsd) * 100;
-      const start = cumulative;
-      cumulative += pct;
-      segments.push(`${chain?.color.primary ?? '#666'} ${start.toFixed(2)}% ${cumulative.toFixed(2)}%`);
-    }
-    conicGradient = `conic-gradient(from 220deg, ${segments.join(', ')})`;
-  }
-
-  return (
-    <>
-      <button
-        className="portfolio-toggle"
-        onClick={toggleVisible}
-        title={portfolioVisible ? 'Hide portfolio' : 'Show portfolio'}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 20V10" />
-          <path d="M12 20V4" />
-          <path d="M6 20v-6" />
-        </svg>
-      </button>
-      {portfolioVisible && (
-        <div className="portfolio-panel">
-          <div className="portfolio-header">
-            <span className="portfolio-title">PORTFOLIO</span>
-            <button className="detail-close" onClick={toggleVisible}>&times;</button>
-          </div>
-
-          {loading ? (
-            <div className="portfolio-loading">
-              <div className="portfolio-loading-spinner" />
-              <span>Scanning chains...</span>
-            </div>
-          ) : portfolio.length === 0 ? (
-            <div className="portfolio-empty">
-              <div className="portfolio-empty-icon">&loz;</div>
-              <span>No balances found</span>
-            </div>
-          ) : (
-            <>
-              {/* Hero: Ring chart + Total value */}
-              <div className="portfolio-hero">
-                <div className="portfolio-ring-wrap">
-                  <div
-                    className={`portfolio-ring${conicGradient ? '' : ' portfolio-ring--empty'}`}
-                    style={conicGradient ? { background: conicGradient } : undefined}
-                  />
-                  <div className="portfolio-ring-inner">
-                    <span className="portfolio-ring-count">{chainEntries.length || '--'}</span>
-                    <span className="portfolio-ring-sub">chains</span>
-                  </div>
-                </div>
-                <div className="portfolio-hero-data">
-                  <span className="portfolio-hero-label">Total Value</span>
-                  <span className="portfolio-hero-value">
-                    {totalUsd > 0 ? formatPortfolioUsd(totalUsd) : '--'}
-                  </span>
-                  <span className="portfolio-hero-count">{sorted.length} asset{sorted.length !== 1 ? 's' : ''}</span>
-                </div>
-              </div>
-
-              {/* Chain allocation pills */}
-              {chainEntries.length > 0 && (
-                <div className="portfolio-alloc">
-                  {chainEntries.map(([chainId, value]) => {
-                    const chain = CHAINS[chainId];
-                    const pct = totalUsd > 0 ? (value / totalUsd) * 100 : 0;
-                    return (
-                      <div
-                        key={chainId}
-                        className="portfolio-alloc-pill"
-                        style={{ '--pill-color': chain?.color.primary } as React.CSSProperties}
-                      >
-                        <span className="portfolio-alloc-dot" style={{ background: chain?.color.primary }} />
-                        <span className="portfolio-alloc-name">{chain?.name ?? chainId}</span>
-                        <span className="portfolio-alloc-pct">{Math.round(pct)}%</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Net flow */}
-              {(netFlow.sent > 0 || netFlow.received > 0) && (
-                <div className="portfolio-flow">
-                  <div className="portfolio-flow-item">
-                    <span className="portfolio-flow-arrow portfolio-flow-in">&uarr;</span>
-                    <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.received)}</span>
-                      <span className="portfolio-flow-label">Received</span>
-                    </div>
-                  </div>
-                  <div className="portfolio-flow-divider" />
-                  <div className="portfolio-flow-item">
-                    <span className="portfolio-flow-arrow portfolio-flow-out">&darr;</span>
-                    <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.sent)}</span>
-                      <span className="portfolio-flow-label">Sent</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Gradient divider */}
-              <div className="portfolio-divider" />
-
-              {/* Token list */}
-              <div className="portfolio-list">
-                {sorted.map((item, i) => {
-                  const chain = CHAINS[item.chain];
-                  const pct = totalUsd > 0 ? (item.usdValue / totalUsd) * 100 : 0;
-                  return (
-                    <div
-                      key={`${item.chain}-${item.symbol}-${i}`}
-                      className="portfolio-item"
-                      style={{ animationDelay: `${i * 50}ms` } as React.CSSProperties}
-                    >
-                      <div className="portfolio-item-accent" style={{ background: item.color }} />
-                      <div className="portfolio-item-body">
-                        <div className="portfolio-item-top">
-                          <span className="portfolio-symbol">{item.symbol}</span>
-                          <span
-                            className="portfolio-chain-badge"
-                            style={{ color: chain?.color.primary, borderColor: (chain?.color.primary ?? '#666') + '40' }}
-                          >
-                            {chain?.abbr ?? item.chain}
-                          </span>
-                          <span className="portfolio-usd">
-                            {item.usdValue > 0.01 ? formatPortfolioUsd(item.usdValue) : ''}
-                          </span>
-                        </div>
-                        <div className="portfolio-item-bottom">
-                          <span className="portfolio-balance">
-                            {formatHumanValue(item.balance)}
-                          </span>
-                          {pct > 0 && (
-                            <div className="portfolio-pct-track">
-                              <div
-                                className="portfolio-pct-fill"
-                                style={{ width: `${Math.max(pct, 2)}%`, background: item.color }}
-                              />
-                            </div>
-                          )}
-                          {pct > 0 && (
-                            <span className="portfolio-pct-text">{Math.round(pct)}%</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-// ── Audio Toggle ──────────────────────────────
-
-function AudioToggle() {
-  const audioEnabled = useStore((s) => s.audioEnabled);
-
-  const handleToggle = () => {
-    const next = !audioEnabled;
-    useStore.getState().setAudioEnabled(next);
-    if (next) {
-      soundEngine.enable();
-    } else {
-      soundEngine.disable();
-    }
-  };
-
-  return (
-    <button
-      className={`audio-toggle ${audioEnabled ? 'audio-toggle--on' : ''}`}
-      onClick={handleToggle}
-      title={audioEnabled ? 'Mute audio' : 'Enable audio'}
-      aria-label={audioEnabled ? 'Mute audio' : 'Enable audio'}
-    >
-      {audioEnabled ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-        </svg>
-      ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-          <line x1="23" y1="9" x2="17" y2="15" />
-          <line x1="17" y1="9" x2="23" y2="15" />
-        </svg>
-      )}
-    </button>
-  );
-}
-
 
 // ── Screenshot Button + Modal ─────────────────
 
@@ -1154,7 +854,7 @@ function ScreenshotButton() {
     if (!sceneCanvas) return;
     const dataUrl = sceneCanvas.toDataURL('image/png');
 
-    // Composite with watermark
+    // Composite with branding overlay matching website header position
     const img = new Image();
     img.onload = () => {
       const offscreen = document.createElement('canvas');
@@ -1164,14 +864,27 @@ function ScreenshotButton() {
       if (!ctx) { setPreview(dataUrl); return; }
       ctx.drawImage(img, 0, 0);
 
-      // Watermark bar at bottom
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillRect(0, img.height - 28, img.width, 28);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.font = '12px monospace';
-      const s = useStore.getState();
-      const text = `ChainPulse | TX: ${s.txCount.toLocaleString()} | Whales: ${s.recentWhales.length}`;
-      ctx.fillText(text, 8, img.height - 10);
+      const dpr = window.devicePixelRatio || 1;
+      const scale = Math.max(dpr, img.width / 1920);
+
+      // Top-left branding — same position as website header
+      const pad = Math.round(20 * scale);
+      const iconSize = Math.round(16 * scale);
+      const textSize = Math.round(14 * scale);
+
+      // Icon circle (◉)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.textBaseline = 'middle';
+      const iconY = pad + Math.round(textSize * 0.5);
+      ctx.fillText('◉', pad, iconY);
+      const iconWidth = ctx.measureText('◉').width;
+
+      // "CHAINPULSE" text
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = `600 ${textSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.letterSpacing = `${Math.round(2 * scale)}px`;
+      ctx.fillText('CHAINPULSE', pad + iconWidth + Math.round(8 * scale), iconY);
 
       setPreview(offscreen.toDataURL('image/png'));
     };
@@ -1205,7 +918,7 @@ function ScreenshotButton() {
         title="Capture screenshot"
         aria-label="Capture screenshot"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
           <circle cx="12" cy="13" r="4" />
         </svg>
@@ -1600,7 +1313,6 @@ export function Overlay() {
           ))}
         </div>
         <TokenFilter />
-        <WalletButton />
         </div>
       </div>
 
@@ -1608,16 +1320,36 @@ export function Overlay() {
       {/* Footer */}
       <div className="overlay-footer">
         <div className="hud-left">
-          <TxCounter />
-          <ModeToggle />
-          <InfoButton onClick={handleToggleInfo} />
-          <AudioToggle />
-          <ScreenshotButton />
-          <PortfolioPanel />
+          <div className="toolbar">
+            <ModeIndicator />
+            <div className="toolbar-sep" />
+            <TxCounter />
+            <div className="toolbar-sep" />
+            <WhaleThresholdSlider />
+            <div className="toolbar-sep" />
+            <InfoButton onClick={handleToggleInfo} />
+            <ScreenshotButton />
+          </div>
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 
         <WhaleAlertsPanel recentWhales={filteredWhales} />
+      </div>
+
+      {/* Credit */}
+      <div className="footer-credit">
+        made with ❤️ by Rohit KK
+        <a
+          href="https://github.com/Rohit-KK15/chainpulse"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="github-link"
+          title="View on GitHub"
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
       </div>
 
       {/* Tx detail panel */}

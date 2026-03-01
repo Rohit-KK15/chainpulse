@@ -9,7 +9,6 @@ import { activityMonitor } from '../processing/ActivityMonitor';
 import { queueBlockPulse } from '../visualization/blockPulseEvents';
 import { hexToRgb } from '../utils/color';
 import type { RawTransaction } from '../data/types';
-import { soundEngine } from '../audio/SoundEngine';
 import { detectBridge } from '../config/bridges';
 import { queueBridgeArc } from '../visualization/bridgeArcEvents';
 
@@ -63,17 +62,6 @@ export function useChainData(): void {
             s.setInitialized(true);
           }
 
-          // Audio: ping for high-value transactions
-          if (useStore.getState().audioEnabled) {
-            for (const tx of processed) {
-              if (tx.value > 1) {
-                soundEngine.playTxPing(tx.value, chainId);
-                break; // One ping per batch to avoid noise
-              }
-            }
-            soundEngine.updateAmbient(activityMonitor.getActivityLevel(chainId));
-          }
-
           if (processed.length > 0) {
             const prevBlock = s.latestBlocks[chainId];
             const newBlock = processed[0].blockNumber;
@@ -84,10 +72,6 @@ export function useChainData(): void {
               const now = Date.now();
               if (!lastPulseTime[chainId] || now - lastPulseTime[chainId] >= MIN_PULSE_INTERVAL_MS) {
                 lastPulseTime[chainId] = now;
-                // Audio: block chime
-                if (useStore.getState().audioEnabled) {
-                  soundEngine.playBlockChime();
-                }
                 // Emit block pulse wave (only for enabled chains)
                 const chainConfig = CHAINS[chainId];
                 if (chainConfig && useStore.getState().enabledChains.has(chainId)) {
@@ -104,9 +88,6 @@ export function useChainData(): void {
           for (const tx of processed) {
             if (tx.isWhale) {
               useStore.getState().addWhale(tx);
-              if (useStore.getState().audioEnabled) {
-                soundEngine.playWhaleAlert();
-              }
             }
 
             // Detect bridge transactions for cross-chain arcs
@@ -127,16 +108,6 @@ export function useChainData(): void {
               }
             }
 
-            // Track net flow for connected wallet
-            const wallet = useStore.getState().walletAddress;
-            if (wallet) {
-              const walletLower = wallet.toLowerCase();
-              if (tx.from.toLowerCase() === walletLower) {
-                useStore.getState().addNetFlow('sent', tx.value);
-              } else if (tx.to?.toLowerCase() === walletLower) {
-                useStore.getState().addNetFlow('received', tx.value);
-              }
-            }
           }
         };
 

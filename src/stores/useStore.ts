@@ -85,28 +85,6 @@ interface AppState {
   whaleThresholdUsd: number;
   setWhaleThresholdUsd: (v: number) => void;
 
-  // Wallet
-  walletAddress: string | null;
-  walletChainId: number | null;
-  walletBalance: string | null;
-  isWalletConnected: boolean;
-  setWalletState: (address: string | null, chainId: number | null, balance: string | null) => void;
-
-  // Net flow tracking (when wallet connected)
-  netFlow: { sent: number; received: number };
-  addNetFlow: (direction: 'sent' | 'received', amount: number) => void;
-  resetNetFlow: () => void;
-
-  // Portfolio
-  portfolio: { symbol: string; balance: number; chain: string; color: string }[];
-  portfolioVisible: boolean;
-  setPortfolio: (p: { symbol: string; balance: number; chain: string; color: string }[]) => void;
-  setPortfolioVisible: (v: boolean) => void;
-
-  // Audio
-  audioEnabled: boolean;
-  setAudioEnabled: (v: boolean) => void;
-
   // Token prices
   tokenPrices: Record<string, number>;
   setTokenPrices: (prices: Record<string, number>) => void;
@@ -322,40 +300,6 @@ export const useStore = create<AppState>((set, get) => ({
     set({ whaleThresholdUsd: v });
     persistFilters(get);
   },
-
-  // Wallet
-  walletAddress: null,
-  walletChainId: null,
-  walletBalance: null,
-  isWalletConnected: false,
-  setWalletState: (address, chainId, balance) =>
-    set({
-      walletAddress: address,
-      walletChainId: chainId,
-      walletBalance: balance,
-      isWalletConnected: address !== null,
-    }),
-
-  // Net flow
-  netFlow: { sent: 0, received: 0 },
-  addNetFlow: (direction, amount) =>
-    set((s) => ({
-      netFlow: {
-        sent: s.netFlow.sent + (direction === 'sent' ? amount : 0),
-        received: s.netFlow.received + (direction === 'received' ? amount : 0),
-      },
-    })),
-  resetNetFlow: () => set({ netFlow: { sent: 0, received: 0 } }),
-
-  // Portfolio
-  portfolio: [],
-  portfolioVisible: false,
-  setPortfolio: (p) => set({ portfolio: p }),
-  setPortfolioVisible: (v) => set({ portfolioVisible: v }),
-
-  // Audio
-  audioEnabled: false,
-  setAudioEnabled: (v) => set({ audioEnabled: v }),
 
   // Token prices
   tokenPrices: {},

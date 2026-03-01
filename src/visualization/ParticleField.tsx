@@ -25,7 +25,7 @@ const SPAWN_RADIUS = 3.5;
 const PULSE_NUDGE_RADIUS = 5;
 const PULSE_NUDGE_STRENGTH = 0.1;
 const PULSE_NUDGE_DURATION = 2.0;
-const TOUCH_TAP_THRESHOLD = 10; // px — touch moves within this are taps, not drags
+const TOUCH_TAP_THRESHOLD = 20; // px — touch moves within this are taps, not drags
 
 interface ActivePulse {
   cx: number; cy: number; cz: number;
@@ -123,7 +123,7 @@ export function ParticleField() {
     let lastMoveTime = 0;
     let pointerDownPos: { x: number; y: number } | null = null;
 
-    function findNearest(clientX: number, clientY: number): InspectedTx | null {
+    function findNearest(clientX: number, clientY: number, isTouch = false): InspectedTx | null {
       const pool = poolRef.current;
       const map = indexMapRef.current;
       if (map.length === 0) return null;
@@ -137,7 +137,8 @@ export function ParticleField() {
       const ray = raycasterRef.current.ray;
 
       const camDist = camera.position.length();
-      const hitThreshold = 0.5 + camDist * 0.04;
+      const baseThreshold = 0.5 + camDist * 0.04;
+      const hitThreshold = isTouch ? baseThreshold * 2.5 : baseThreshold;
       let closestDist = hitThreshold;
       let closestIdx = -1;
 
@@ -180,7 +181,8 @@ export function ParticleField() {
         const dx = e.clientX - pointerDownPos.x;
         const dy = e.clientY - pointerDownPos.y;
         if (dx * dx + dy * dy < TOUCH_TAP_THRESHOLD * TOUCH_TAP_THRESHOLD) {
-          const hit = findNearest(e.clientX, e.clientY);
+          const isTouch = e.pointerType === 'touch';
+          const hit = findNearest(e.clientX, e.clientY, isTouch);
           useStore.getState().setInspectedTx(hit);
         }
       }

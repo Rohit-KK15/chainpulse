@@ -88,9 +88,9 @@ export function useChainData(): void {
                 if (useStore.getState().audioEnabled) {
                   soundEngine.playBlockChime();
                 }
-                // Emit block pulse wave
+                // Emit block pulse wave (only for enabled chains)
                 const chainConfig = CHAINS[chainId];
-                if (chainConfig) {
+                if (chainConfig && useStore.getState().enabledChains.has(chainId)) {
                   queueBlockPulse({
                     chainId,
                     center: chainConfig.center as [number, number, number],
@@ -148,11 +148,13 @@ export function useChainData(): void {
           useStore.getState().setChainFailed(chainId, true);
         };
 
-        if (isSimulation) {
+        if (isSimulation || !CHAINS[chainId].rpcWs) {
+          // No WebSocket URL (e.g. Solana) or user chose simulation — go straight to sim
           const sim = new SimulationProvider(chainId, handleRawTransactions);
           sim.start();
           providersRef.current.push(sim);
           useStore.getState().setChainConnected(chainId, true);
+          if (!isSimulation) useStore.getState().setChainFailed(chainId, true);
         } else {
           try {
             const conn = new ConnectionManager(chainId, handleRawTransactions);

@@ -229,12 +229,21 @@ export function ParticleField() {
     const targetOpacity = isTransitioning ? 0 : 1;
     transitionOpacity.current += (targetOpacity - transitionOpacity.current) * Math.min(delta * 5, 1);
 
+    // Read filter state once per frame
+    const enabledChains = useStore.getState().enabledChains;
+    const enabledTokens = useStore.getState().enabledTokens;
+
     // Drain queued transactions and spawn particles at chain cluster positions
     const queueSize = txQueue.size;
     const targetRate = Math.max(queueSize / SPREAD_WINDOW, MIN_DRAIN_RATE);
     const spawnsThisFrame = Math.min(Math.ceil(targetRate * delta), MAX_PER_FRAME);
     const batch = txQueue.drain(spawnsThisFrame);
     for (const tx of batch) {
+      // Filter by enabled chains
+      if (!enabledChains.has(tx.chainId)) continue;
+      // Filter by enabled tokens
+      const symbol = tx.tokenInfo?.symbol ?? CHAINS[tx.chainId]?.nativeCurrency;
+      if (symbol && !enabledTokens.has(symbol)) continue;
       const chainCenter = CHAINS[tx.chainId]?.center ?? [0, 0, 0];
       const personality = getPersonality(tx.chainId);
 

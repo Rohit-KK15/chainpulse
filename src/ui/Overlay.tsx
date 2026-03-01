@@ -777,8 +777,10 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
   const [exitItem, setExitItem] = useState<import('../data/types').ProcessedTransaction | null>(null);
   const prevRef = useRef<import('../data/types').ProcessedTransaction[]>([]);
   const enteringHashRef = useRef<string | null>(null);
+  const isMobile = useIsMobile();
 
-  const visible = recentWhales.slice(0, MAX_VISIBLE_WHALES);
+  const maxWhales = isMobile ? 3 : MAX_VISIBLE_WHALES;
+  const visible = recentWhales.slice(0, maxWhales);
 
   useEffect(() => {
     const prev = prevRef.current;

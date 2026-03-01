@@ -2221,19 +2221,45 @@ button.mode-indicator:hover {
     right: -60px;
   }
 
+  /* Footer stacks vertically on mobile */
+  .overlay-footer {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+
+  .whale-alerts-container {
+    align-items: stretch;
+  }
+
+  .whale-alerts {
+    max-height: 140px;
+    overflow: hidden;
+  }
+
   .whale-alert {
-    font-size: var(--font-size-base);
-    padding: var(--space-sm) var(--space-lg);
-    min-height: 36px;
+    font-size: var(--font-size-sm);
+    padding: var(--space-xs) var(--space-md);
+    min-height: 32px;
+    gap: 6px;
+  }
+
+  .whale-alert-icon {
+    font-size: 10px;
   }
 
   .whale-alert-from {
     display: none;
   }
 
+  .whale-alert-time {
+    display: none;
+  }
+
   .whale-history-toggle {
-    min-height: 36px;
-    padding: var(--space-sm) var(--space-lg);
+    min-height: 32px;
+    padding: var(--space-xs) var(--space-md);
+    align-self: flex-end;
   }
 
   .tx-detail {

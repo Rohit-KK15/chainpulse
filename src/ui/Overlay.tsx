@@ -7,6 +7,22 @@ import { fetchPrices, formatUsdValue } from '../data/PriceFeed';
 import { POPULAR_SYMBOLS, getChainTokens } from '../config/tokenRegistry';
 import { searchTokens, initTokenLists, type CachedToken } from '../data/TokenListService';
 
+// ── Mobile detection ──────────────────────────────
+
+function useIsMobile(breakpoint = 768): boolean {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth <= breakpoint
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // ── Clipboard helper ───────────────────────────
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -1216,6 +1232,64 @@ function TokenFilter() {
   );
 }
 
+// ── Mobile Drawer ─────────────────────────────
+
+function MobileDrawer({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [open]);
+
+  return (
+    <>
+      <div
+        className={`mobile-drawer-backdrop ${open ? 'open' : ''}`}
+        onClick={onClose}
+      />
+      <div
+        ref={drawerRef}
+        className={`mobile-drawer ${open ? 'open' : ''}`}
+      >
+        <div className="mobile-drawer-header">
+          <span className="mobile-drawer-title">Controls</span>
+          <button className="mobile-drawer-close" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="mobile-drawer-body">
+          {children}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Main Overlay ───────────────────────────────
 
 export function Overlay() {
@@ -1228,6 +1302,8 @@ export function Overlay() {
   const toggleChain = useStore((s) => s.toggleChain);
   const setAllChains = useStore((s) => s.setAllChains);
   const [infoOpen, setInfoOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Filter whales to only enabled chains & tokens
   const filteredWhales = useMemo(() =>
@@ -1286,42 +1362,100 @@ export function Overlay() {
             <span className="logo-icon">◉</span>
             <span className="logo-text">ChainPulse</span>
           </div>
-          <StatsStrip />
+          {!isMobile && <StatsStrip />}
         </div>
 
-        <div className="header-right">
-        <div className="chain-selector">
+        {isMobile ? (
           <button
-            className={`chain-btn ${enabledChains.size === Object.keys(CHAINS).length ? 'active' : ''}`}
-            style={{
-              '--chain-color': '#888',
-              '--chain-color-dim': '#88888840',
-            } as React.CSSProperties}
-            onClick={() => {
-              setAllChains(true);
-              setFocusedChain(null);
-            }}
+            className="mobile-menu-btn"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
           >
-            All
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
           </button>
-          {Object.values(CHAINS).map((chain) => (
-            <button
-              key={chain.id}
-              className={`chain-btn ${enabledChains.has(chain.id) ? 'active' : 'disabled'}`}
-              style={{
-                '--chain-color': chain.color.primary,
-                '--chain-color-dim': chain.color.primary + '40',
-              } as React.CSSProperties}
-              onClick={() => toggleChain(chain.id)}
-            >
-              {chain.abbr}
-            </button>
-          ))}
-        </div>
-        <TokenFilter />
-        </div>
+        ) : (
+          <div className="header-right">
+            <div className="chain-selector">
+              <button
+                className={`chain-btn ${enabledChains.size === Object.keys(CHAINS).length ? 'active' : ''}`}
+                style={{
+                  '--chain-color': '#888',
+                  '--chain-color-dim': '#88888840',
+                } as React.CSSProperties}
+                onClick={() => {
+                  setAllChains(true);
+                  setFocusedChain(null);
+                }}
+              >
+                All
+              </button>
+              {Object.values(CHAINS).map((chain) => (
+                <button
+                  key={chain.id}
+                  className={`chain-btn ${enabledChains.has(chain.id) ? 'active' : 'disabled'}`}
+                  style={{
+                    '--chain-color': chain.color.primary,
+                    '--chain-color-dim': chain.color.primary + '40',
+                  } as React.CSSProperties}
+                  onClick={() => toggleChain(chain.id)}
+                >
+                  {chain.abbr}
+                </button>
+              ))}
+            </div>
+            <TokenFilter />
+          </div>
+        )}
       </div>
 
+      {/* Mobile drawer */}
+      {isMobile && (
+        <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+          <div className="mobile-drawer-section">
+            <div className="mobile-drawer-section-label">Stats</div>
+            <StatsStrip />
+          </div>
+          <div className="mobile-drawer-section">
+            <div className="mobile-drawer-section-label">Chains</div>
+            <div className="chain-selector mobile-chain-selector">
+              <button
+                className={`chain-btn ${enabledChains.size === Object.keys(CHAINS).length ? 'active' : ''}`}
+                style={{
+                  '--chain-color': '#888',
+                  '--chain-color-dim': '#88888840',
+                } as React.CSSProperties}
+                onClick={() => {
+                  setAllChains(true);
+                  setFocusedChain(null);
+                }}
+              >
+                All Chains
+              </button>
+              {Object.values(CHAINS).map((chain) => (
+                <button
+                  key={chain.id}
+                  className={`chain-btn ${enabledChains.has(chain.id) ? 'active' : 'disabled'}`}
+                  style={{
+                    '--chain-color': chain.color.primary,
+                    '--chain-color-dim': chain.color.primary + '40',
+                  } as React.CSSProperties}
+                  onClick={() => toggleChain(chain.id)}
+                >
+                  {chain.abbr}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mobile-drawer-section">
+            <div className="mobile-drawer-section-label">Tokens</div>
+            <TokenFilter />
+          </div>
+        </MobileDrawer>
+      )}
 
       {/* Footer */}
       <div className="overlay-footer">
@@ -1363,8 +1497,8 @@ export function Overlay() {
         <TxDetail tx={inspectedTx} onClose={handleCloseDetail} />
       )}
 
-      {/* Hover tooltip */}
-      <HoverTooltip />
+      {/* Hover tooltip — desktop only */}
+      {!isMobile && <HoverTooltip />}
     </div>
   );
 }

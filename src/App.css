@@ -191,6 +191,10 @@ button:focus-visible,
   flex-direction: column;
   justify-content: space-between;
   padding: var(--space-3xl);
+  padding-top: max(var(--space-3xl), env(safe-area-inset-top));
+  padding-bottom: max(var(--space-3xl), env(safe-area-inset-bottom));
+  padding-left: max(var(--space-3xl), env(safe-area-inset-left));
+  padding-right: max(var(--space-3xl), env(safe-area-inset-right));
   z-index: 10;
 }
 
@@ -1998,7 +2002,14 @@ button.mode-indicator:hover {
 
 /* ── Responsive: mobile ────────────────────────── */
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
+  :root {
+    --font-size-xs: 10px;
+    --font-size-sm: 11px;
+    --font-size-base: 12px;
+    --font-size-md: 13px;
+  }
+
   .overlay {
     padding: var(--space-xl);
   }

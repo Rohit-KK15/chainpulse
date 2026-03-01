@@ -2262,6 +2262,10 @@ button.mode-indicator:hover {
     align-self: flex-end;
   }
 
+  .footer-credit {
+    display: none;
+  }
+
   .tx-detail {
     width: calc(100vw - 32px);
     left: 16px !important;
@@ -2281,8 +2285,16 @@ button.mode-indicator:hover {
   }
 
   .toolbar {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
+    gap: 4px;
+    padding: 4px 8px;
+  }
+
+  .toolbar-sep {
+    height: 12px;
+  }
+
+  .toolbar-stat-label {
+    display: none;
   }
 }
 

@@ -87,8 +87,8 @@ export class SimulationProvider {
         }
       }
 
-      // Token transfer: ~5% chance per tick of 1 token transfer
-      if (Math.random() < 0.05) {
+      // Token transfer: ~15% chance per tick of 1 token transfer
+      if (Math.random() < 0.15) {
         const tokens = getChainTokens(this.chainId);
         if (tokens.length > 0) {
           const token = tokens[Math.floor(Math.random() * tokens.length)];

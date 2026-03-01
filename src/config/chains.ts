@@ -14,6 +14,7 @@ export interface ChainConfig {
     accent: string;
   };
   whaleThreshold: number;
+  coingeckoPlatformId: string | null;
   center: [number, number, number];
 }
 
@@ -33,6 +34,7 @@ interface ChainDef {
     accent: string;
   };
   whaleThreshold: number;
+  coingeckoPlatformId: string | null;
 }
 
 // Define chains without centers — positions are auto-calculated
@@ -53,6 +55,7 @@ const CHAIN_DEFS: ChainDef[] = [
       accent: '#C0CCFF',
     },
     whaleThreshold: 5,
+    coingeckoPlatformId: 'ethereum',
   },
   {
     id: 'polygon',
@@ -70,6 +73,7 @@ const CHAIN_DEFS: ChainDef[] = [
       accent: '#D4B8FF',
     },
     whaleThreshold: 25000,
+    coingeckoPlatformId: 'polygon-pos',
   },
   {
     id: 'arbitrum',
@@ -87,13 +91,86 @@ const CHAIN_DEFS: ChainDef[] = [
       accent: '#96D4FF',
     },
     whaleThreshold: 5,
+    coingeckoPlatformId: 'arbitrum-one',
+  },
+  {
+    id: 'base',
+    name: 'Base',
+    abbr: 'BASE',
+    chainId: 8453,
+    rpcWs: 'wss://base-rpc.publicnode.com',
+    rpcHttp: 'https://base-rpc.publicnode.com',
+    nativeCurrency: 'ETH',
+    blockTime: 2,
+    explorerTx: 'https://basescan.org/tx/',
+    color: {
+      primary: '#0052FF',
+      secondary: '#3378FF',
+      accent: '#80B3FF',
+    },
+    whaleThreshold: 5,
+    coingeckoPlatformId: 'base',
+  },
+  {
+    id: 'optimism',
+    name: 'Optimism',
+    abbr: 'OP',
+    chainId: 10,
+    rpcWs: 'wss://optimism-rpc.publicnode.com',
+    rpcHttp: 'https://optimism-rpc.publicnode.com',
+    nativeCurrency: 'ETH',
+    blockTime: 2,
+    explorerTx: 'https://optimistic.etherscan.io/tx/',
+    color: {
+      primary: '#FF0420',
+      secondary: '#FF3B50',
+      accent: '#FF8090',
+    },
+    whaleThreshold: 5,
+    coingeckoPlatformId: 'optimistic-ethereum',
+  },
+  {
+    id: 'avalanche',
+    name: 'Avalanche',
+    abbr: 'AVAX',
+    chainId: 43114,
+    rpcWs: 'wss://avalanche-c-chain-rpc.publicnode.com',
+    rpcHttp: 'https://avalanche-c-chain-rpc.publicnode.com',
+    nativeCurrency: 'AVAX',
+    blockTime: 2,
+    explorerTx: 'https://snowtrace.io/tx/',
+    color: {
+      primary: '#E84142',
+      secondary: '#EE6A6B',
+      accent: '#F5A0A0',
+    },
+    whaleThreshold: 50,
+    coingeckoPlatformId: 'avalanche',
+  },
+  {
+    id: 'bsc',
+    name: 'BSC',
+    abbr: 'BSC',
+    chainId: 56,
+    rpcWs: 'wss://bsc-rpc.publicnode.com',
+    rpcHttp: 'https://bsc-rpc.publicnode.com',
+    nativeCurrency: 'BNB',
+    blockTime: 3,
+    explorerTx: 'https://bscscan.com/tx/',
+    color: {
+      primary: '#F0B90B',
+      secondary: '#F5CC3D',
+      accent: '#F9E080',
+    },
+    whaleThreshold: 10,
+    coingeckoPlatformId: 'binance-smart-chain',
   },
 ];
 
 // Auto-position chains in a circle on the XY plane
 function computeCenters(defs: ChainDef[]): Record<string, ChainConfig> {
   const n = defs.length;
-  const radius = n === 1 ? 0 : 4.2;
+  const radius = n === 1 ? 0 : Math.max(4.2, n * 0.8);
   const result: Record<string, ChainConfig> = {};
 
   for (let i = 0; i < n; i++) {

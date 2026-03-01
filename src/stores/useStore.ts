@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ProcessedTransaction } from '../data/types';
 import { CHAINS } from '../config/chains';
+import { getAllPopularSymbols } from '../config/tokenRegistry';
 
 export interface InspectedTx {
   hash: string;
@@ -78,6 +79,9 @@ interface AppState {
   inspectedTx: InspectedTx | null;
   setInspectedTx: (tx: InspectedTx | null) => void;
 
+  hoveredTx: InspectedTx | null;
+  setHoveredTx: (tx: InspectedTx | null) => void;
+
   whaleThresholdUsd: number;
   setWhaleThresholdUsd: (v: number) => void;
 
@@ -107,6 +111,16 @@ interface AppState {
   tokenPrices: Record<string, number>;
   setTokenPrices: (prices: Record<string, number>) => void;
 
+  // Chain & token filters
+  enabledChains: Set<string>;
+  toggleChain: (id: string) => void;
+  setAllChains: (enabled: boolean) => void;
+
+  enabledTokens: Set<string>;
+  toggleToken: (symbol: string) => void;
+  setAllTokens: (enabled: boolean) => void;
+  addCustomToken: (symbol: string) => void;
+  customTokens: Set<string>;
 }
 
 const MAX_RECENT_WHALES = 6;
@@ -115,29 +129,83 @@ const MAX_WHALE_HISTORY = 50;
 
 const STORAGE_KEY = 'chainpulse_prefs';
 
-function loadPrefs(): { isSimulation: boolean; whaleHistory: WhaleRecord[]; whaleThresholdUsd: number } {
+const allChainIds = new Set(Object.keys(CHAINS));
+const allPopularSymbols = getAllPopularSymbols();
+
+interface Prefs {
+  isSimulation: boolean;
+  whaleHistory: WhaleRecord[];
+  whaleThresholdUsd: number;
+  enabledChains: Set<string>;
+  enabledTokens: Set<string>;
+  customTokens: Set<string>;
+}
+
+function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const enabledChains = Array.isArray(parsed.enabledChains)
+        ? new Set<string>(parsed.enabledChains.filter((c: string) => allChainIds.has(c)))
+        : new Set(allChainIds);
+      const customTokens = Array.isArray(parsed.customTokens)
+        ? new Set<string>(parsed.customTokens)
+        : new Set<string>();
+      const defaultTokens = new Set([...allPopularSymbols, ...customTokens]);
+      const enabledTokens = Array.isArray(parsed.enabledTokens)
+        ? new Set<string>(parsed.enabledTokens)
+        : defaultTokens;
       return {
         isSimulation: parsed.isSimulation ?? true,
         whaleHistory: Array.isArray(parsed.whaleHistory) ? parsed.whaleHistory.slice(0, MAX_WHALE_HISTORY) : [],
         whaleThresholdUsd: typeof parsed.whaleThresholdUsd === 'number' ? parsed.whaleThresholdUsd : 0,
+        enabledChains,
+        enabledTokens,
+        customTokens,
       };
     }
   } catch { /* ignore */ }
-  return { isSimulation: true, whaleHistory: [], whaleThresholdUsd: 0 };
+  return {
+    isSimulation: true,
+    whaleHistory: [],
+    whaleThresholdUsd: 0,
+    enabledChains: new Set(allChainIds),
+    enabledTokens: new Set(allPopularSymbols),
+    customTokens: new Set<string>(),
+  };
 }
 
-function savePrefs(state: { isSimulation: boolean; whaleHistory: WhaleRecord[]; whaleThresholdUsd: number }): void {
+function savePrefs(state: {
+  isSimulation: boolean;
+  whaleHistory: WhaleRecord[];
+  whaleThresholdUsd: number;
+  enabledChains: Set<string>;
+  enabledTokens: Set<string>;
+  customTokens: Set<string>;
+}): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       isSimulation: state.isSimulation,
       whaleHistory: state.whaleHistory,
       whaleThresholdUsd: state.whaleThresholdUsd,
+      enabledChains: [...state.enabledChains],
+      enabledTokens: [...state.enabledTokens],
+      customTokens: [...state.customTokens],
     }));
   } catch { /* ignore */ }
+}
+
+function persistFilters(get: () => AppState): void {
+  const s = get();
+  savePrefs({
+    isSimulation: s.isSimulation,
+    whaleHistory: s.whaleHistory,
+    whaleThresholdUsd: s.whaleThresholdUsd,
+    enabledChains: s.enabledChains,
+    enabledTokens: s.enabledTokens,
+    customTokens: s.customTokens,
+  });
 }
 
 const prefs = loadPrefs();
@@ -148,17 +216,17 @@ export const useStore = create<AppState>((set, get) => ({
     const target: [number, number, number] = chain
       ? (CHAINS[chain]?.center ?? [0, 0, 0])
       : [0, 0, 0];
-    const distance = chain ? 16 : 22;
+    const distance = chain ? 18 : 28;
     set({ focusedChain: chain, cameraTarget: target, cameraDistance: distance });
   },
 
   cameraTarget: [0, 0, 0],
-  cameraDistance: 22,
+  cameraDistance: 28,
 
   isSimulation: prefs.isSimulation,
   setSimulation: (sim) => {
     set({ isSimulation: sim });
-    savePrefs({ isSimulation: sim, whaleHistory: get().whaleHistory, whaleThresholdUsd: get().whaleThresholdUsd });
+    persistFilters(get);
   },
 
   transitioning: false,
@@ -232,7 +300,7 @@ export const useStore = create<AppState>((set, get) => ({
         to: tx.to,
       };
       const history = [record, ...s.whaleHistory].slice(0, MAX_WHALE_HISTORY);
-      savePrefs({ isSimulation: get().isSimulation, whaleHistory: history, whaleThresholdUsd: get().whaleThresholdUsd });
+      persistFilters(() => ({ ...get(), whaleHistory: history }));
       const dedupedWhales = s.recentWhales.filter((w) => w.hash !== tx.hash);
       return {
         recentWhales: [tx, ...dedupedWhales].slice(0, MAX_RECENT_WHALES),
@@ -246,10 +314,13 @@ export const useStore = create<AppState>((set, get) => ({
   inspectedTx: null,
   setInspectedTx: (tx) => set({ inspectedTx: tx }),
 
+  hoveredTx: null,
+  setHoveredTx: (tx) => set({ hoveredTx: tx }),
+
   whaleThresholdUsd: prefs.whaleThresholdUsd,
   setWhaleThresholdUsd: (v) => {
     set({ whaleThresholdUsd: v });
-    savePrefs({ isSimulation: get().isSimulation, whaleHistory: get().whaleHistory, whaleThresholdUsd: v });
+    persistFilters(get);
   },
 
   // Wallet
@@ -290,4 +361,56 @@ export const useStore = create<AppState>((set, get) => ({
   tokenPrices: {},
   setTokenPrices: (prices) => set({ tokenPrices: prices }),
 
+  // Chain & token filters
+  enabledChains: prefs.enabledChains,
+  toggleChain: (id) => {
+    set((s) => {
+      const next = new Set(s.enabledChains);
+      if (next.has(id)) {
+        next.delete(id);
+        // Don't allow zero chains
+        if (next.size === 0) return { enabledChains: s.enabledChains };
+      } else {
+        next.add(id);
+      }
+      return { enabledChains: next };
+    });
+    persistFilters(get);
+  },
+  setAllChains: (enabled) => {
+    if (enabled) {
+      set({ enabledChains: new Set(allChainIds) });
+    } else {
+      // Keep at least one chain — don't allow empty
+      set({ enabledChains: new Set(allChainIds) });
+    }
+    persistFilters(get);
+  },
+
+  enabledTokens: prefs.enabledTokens,
+  toggleToken: (symbol) => {
+    set((s) => {
+      const next = new Set(s.enabledTokens);
+      if (next.has(symbol)) next.delete(symbol); else next.add(symbol);
+      return { enabledTokens: next };
+    });
+    persistFilters(get);
+  },
+  setAllTokens: (enabled) => {
+    const s = get();
+    const all = new Set([...allPopularSymbols, ...s.customTokens]);
+    set({ enabledTokens: enabled ? all : new Set<string>() });
+    persistFilters(get);
+  },
+  addCustomToken: (symbol) => {
+    set((s) => {
+      const nextCustom = new Set(s.customTokens);
+      nextCustom.add(symbol);
+      const nextEnabled = new Set(s.enabledTokens);
+      nextEnabled.add(symbol);
+      return { customTokens: nextCustom, enabledTokens: nextEnabled };
+    });
+    persistFilters(get);
+  },
+  customTokens: prefs.customTokens,
 }));

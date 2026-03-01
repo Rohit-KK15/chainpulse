@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useStore, InspectedTx, WhaleRecord } from '../stores/useStore';
 import { CHAINS } from '../config/chains';
 import { walletManager } from '../wallet/WalletManager';
@@ -7,6 +7,8 @@ import { soundEngine } from '../audio/SoundEngine';
 import { fetchPortfolio } from '../wallet/PortfolioTracker';
 import { sceneCanvas } from '../visualization/Scene';
 import { fetchPrices, formatUsdValue } from '../data/PriceFeed';
+import { POPULAR_SYMBOLS, getChainTokens } from '../config/tokenRegistry';
+import { searchTokens, initTokenLists, type CachedToken } from '../data/TokenListService';
 
 // ── Clipboard helper ───────────────────────────
 
@@ -102,6 +104,18 @@ function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// ── Value formatting (humanized) ─────────────
+
+function formatHumanValue(v: number): string {
+  if (!Number.isFinite(v) || v === 0) return '0';
+  if (v < 0.0001) return '<0.0001';
+  if (v < 1) return v.toPrecision(3);
+  if (v < 1_000) return v.toFixed(2);
+  if (v < 1_000_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (v < 1_000_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  return `${(v / 1_000_000_000).toFixed(2)}B`;
+}
+
 // ── Time formatting ───────────────────────────
 
 function formatRelativeTime(timestamp: number): string {
@@ -149,7 +163,7 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const safeValue = Number.isFinite(tx.value) ? tx.value.toFixed(4) : '0';
+  const safeValue = formatHumanValue(tx.value);
   const safeGas = formatGwei(tx.gasPrice);
   const valueUnit = tx.tokenSymbol ?? chain?.nativeCurrency ?? '';
   const usdValue = formatUsdValue(tx.value, valueUnit);
@@ -211,16 +225,69 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   );
 }
 
+// ── Hover Tooltip ──────────────────────────────
+
+function HoverTooltip() {
+  const hoveredTx = useStore((s) => s.hoveredTx);
+  const inspectedTx = useStore((s) => s.inspectedTx);
+
+  if (!hoveredTx || inspectedTx) return null;
+
+  const chain = CHAINS[hoveredTx.chainId];
+  const valueUnit = hoveredTx.tokenSymbol ?? chain?.nativeCurrency ?? '';
+  const safeValue = formatHumanValue(hoveredTx.value);
+  const usdValue = formatUsdValue(hoveredTx.value, valueUnit);
+
+  // Position near cursor, clamped to viewport
+  const vw = window.visualViewport?.width ?? document.documentElement.clientWidth;
+  const vh = window.visualViewport?.height ?? document.documentElement.clientHeight;
+  const tooltipW = 240;
+  const tooltipH = 90;
+  const style: React.CSSProperties = {
+    left: Math.max(0, Math.min(hoveredTx.screenX + 16, vw - tooltipW - 8)),
+    top: Math.max(0, Math.min(hoveredTx.screenY + 16, vh - tooltipH - 8)),
+  };
+
+  return (
+    <div
+      className="hover-tooltip"
+      style={{
+        ...style,
+        '--chain-color': chain?.color.primary ?? '#fff',
+      } as React.CSSProperties}
+    >
+      <div className="hover-tooltip-header">
+        <span className="detail-chain-dot" style={{ background: chain?.color.primary }} />
+        <span className="hover-tooltip-chain">{chain?.name ?? hoveredTx.chainId}</span>
+        <span className="hover-tooltip-time">{formatRelativeTime(hoveredTx.timestamp)}</span>
+      </div>
+      <div className="hover-tooltip-row">
+        <span className="hover-tooltip-value">
+          {safeValue} {valueUnit}
+          {usdValue && <span className="hover-tooltip-usd"> {usdValue}</span>}
+        </span>
+      </div>
+      <div className="hover-tooltip-row hover-tooltip-hash">
+        {truncateAddress(hoveredTx.hash)}
+      </div>
+      <div className="hover-tooltip-row hover-tooltip-addrs">
+        {truncateAddress(hoveredTx.from)} → {hoveredTx.to ? truncateAddress(hoveredTx.to) : 'Contract'}
+      </div>
+    </div>
+  );
+}
+
 // ── Connection Toast ──────────────────────────
 
 const ConnectionToast = React.memo(function ConnectionToast() {
   const chainConnected = useStore((s) => s.chainConnected);
   const chainFailed = useStore((s) => s.chainFailed);
   const isSimulation = useStore((s) => s.isSimulation);
+  const enabledChains = useStore((s) => s.enabledChains);
 
   if (isSimulation) return null;
 
-  const chains = Object.values(CHAINS);
+  const chains = Object.values(CHAINS).filter((c) => enabledChains.has(c.id));
   const disconnected = chains.filter((c) => chainConnected[c.id] === false);
   const failed = chains.filter((c) => chainFailed[c.id] === true && chainConnected[c.id] === true);
 
@@ -289,16 +356,10 @@ function getConnectionHealth(chainId: string, blockTime: number): 'healthy' | 'w
 }
 
 const StatsStrip = React.memo(function StatsStrip() {
-  const txCount = useStore((s) => s.txCount);
-  const avgGasPerChain = useStore((s) => s.avgGasPerChain);
-  const recentWhales = useStore((s) => s.recentWhales);
-  const latestBlocks = useStore((s) => s.latestBlocks);
   const chainConnected = useStore((s) => s.chainConnected);
-  const isWalletConnected = useStore((s) => s.isWalletConnected);
-  const netFlow = useStore((s) => s.netFlow);
+  const enabledChains = useStore((s) => s.enabledChains);
 
   const [txRate, setTxRate] = useState(0);
-  // Force re-render every second for health indicators
   const [, setTick] = useState(0);
   const prevCountRef = useRef(0);
 
@@ -315,64 +376,26 @@ const StatsStrip = React.memo(function StatsStrip() {
 
   return (
     <div className="stats-strip">
-      <div className="stat">
-        <span className="stat-value">{txRate}</span>
-        <span className="stat-label">TX/S</span>
-      </div>
-      <div className="stat">
-        <span className="stat-value">{recentWhales.length}</span>
-        <span className="stat-label">WHALES</span>
-      </div>
-      {isWalletConnected && (netFlow.sent > 0 || netFlow.received > 0) && (
-        <>
-          <div className="stat-divider" />
-          <div className="stat net-flow-stat">
-            {netFlow.received >= netFlow.sent ? (
-              <span className="net-flow-arrow net-flow-in" title="Net receiving">↑</span>
-            ) : (
-              <span className="net-flow-arrow net-flow-out" title="Net sending">↓</span>
-            )}
-            <span className="stat-value">
-              {Math.abs(netFlow.received - netFlow.sent).toFixed(4)}
-            </span>
-            <span className="stat-label">NET</span>
-          </div>
-        </>
-      )}
+      <span className="stat-value">{txRate}</span>
+      <span className="stat-label">tx/s</span>
       <div className="stat-divider" />
-      {Object.values(CHAINS).map((chain) => {
-        const block = latestBlocks[chain.id];
-        const connected = chainConnected[chain.id];
-        const health = getConnectionHealth(chain.id, chain.blockTime);
-        const chainGas = avgGasPerChain[chain.id];
-        const healthClass = health === 'warning' ? 'health-warning'
-          : health === 'stale' ? 'health-stale'
-          : connected ? 'connected' : '';
-        const statusLabel = health === 'stale' ? `${chain.name}: stale`
-          : health === 'warning' ? `${chain.name}: delayed`
-          : connected ? `${chain.name}: connected`
-          : `${chain.name}: disconnected`;
-        return (
-          <div key={chain.id} className="stat chain-stat">
+      <div className="stat-dots">
+        {Object.values(CHAINS).filter((c) => enabledChains.has(c.id)).map((chain) => {
+          const connected = chainConnected[chain.id];
+          const health = getConnectionHealth(chain.id, chain.blockTime);
+          const healthClass = health === 'warning' ? 'health-warning'
+            : health === 'stale' ? 'health-stale'
+            : connected ? 'connected' : '';
+          return (
             <span
+              key={chain.id}
               className={`status-dot ${healthClass}`}
               style={{ background: connected ? chain.color.primary : undefined }}
-              role="status"
-              aria-label={statusLabel}
-              title={statusLabel}
+              title={`${chain.name}: ${connected ? 'connected' : 'connecting...'}`}
             />
-            <span className="stat-label">{chain.abbr}</span>
-            {block ? (
-              <span className="stat-block">#{block.toLocaleString()}</span>
-            ) : (
-              <span className="stat-block">--</span>
-            )}
-            {chainGas !== undefined && (
-              <span className="stat-gas">{formatGwei(chainGas)}</span>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 });
@@ -447,8 +470,10 @@ function linearToLog(t: number): number {
 }
 
 function formatUsd(value: number): string {
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  if (value >= 1) return `$${value.toFixed(2)}`;
   return `$${value.toLocaleString()}`;
 }
 
@@ -460,75 +485,35 @@ const InfoButton = React.memo(function InfoButton({ onClick }: { onClick: () => 
   );
 });
 
-const GAS_ESTIMATES = [
-  { label: 'ETH Transfer', gas: 21_000 },
-  { label: 'ERC-20 Transfer', gas: 65_000 },
-  { label: 'DEX Swap', gas: 150_000 },
-  { label: 'NFT Mint', gas: 100_000 },
+const GAS_TYPES = [
+  { label: 'Transfer', gas: 21_000 },
+  { label: 'ERC-20', gas: 65_000 },
+  { label: 'Swap', gas: 150_000 },
+  { label: 'Mint', gas: 100_000 },
 ];
 
-function GasEstimator() {
-  const avgGasPerChain = useStore((s) => s.avgGasPerChain);
-  const tokenPrices = useStore((s) => s.tokenPrices);
-  const chains = Object.values(CHAINS);
-
-  // Only show if we have gas data for at least one chain
-  const hasData = chains.some((c) => avgGasPerChain[c.id] !== undefined);
-  if (!hasData) return null;
-
-  return (
-    <>
-      <div className="info-divider" />
-      <div className="info-section">
-        <div className="info-slider-header">
-          <span>Gas Estimates</span>
-        </div>
-        <div className="gas-estimator">
-          <div className="gas-est-header">
-            <span className="gas-est-label-col">Type</span>
-            {chains.map((c) => (
-              <span key={c.id} className="gas-est-chain" style={{ color: c.color.primary }}>{c.abbr}</span>
-            ))}
-          </div>
-          {GAS_ESTIMATES.map((est) => (
-            <div key={est.label} className="gas-est-row">
-              <span className="gas-est-label-col">{est.label}</span>
-              {chains.map((c) => {
-                const gasPrice = avgGasPerChain[c.id];
-                if (gasPrice === undefined) return <span key={c.id} className="gas-est-val">--</span>;
-                const costGwei = gasPrice * est.gas;
-                const costEth = costGwei / 1e9;
-                const nativePrice = tokenPrices[c.nativeCurrency];
-                const usdCost = nativePrice ? costEth * nativePrice : null;
-                return (
-                  <span key={c.id} className="gas-est-val" title={`${costEth.toFixed(6)} ${c.nativeCurrency}`}>
-                    {usdCost !== null ? (usdCost < 0.01 ? '<$0.01' : `$${usdCost.toFixed(2)}`) : (costEth < 0.0001 ? '<0.0001' : costEth.toFixed(4))}
-                  </span>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-        <div className="info-slider-note">
-          {Object.keys(tokenPrices).length > 0 ? 'Estimated USD cost' : `Cost in native token (${chains.map((c) => c.nativeCurrency).filter((v, i, a) => a.indexOf(v) === i).join('/')})`}
-        </div>
-      </div>
-    </>
-  );
-}
+type InfoTab = 'guide' | 'gas' | 'settings';
 
 function InfoPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<InfoTab>('guide');
   const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
   const setWhaleThresholdUsd = useStore((s) => s.setWhaleThresholdUsd);
+  const avgGasPerChain = useStore((s) => s.avgGasPerChain);
+  const tokenPrices = useStore((s) => s.tokenPrices);
+  const enabledChains = useStore((s) => s.enabledChains);
 
   const sliderValue = whaleThresholdUsd > 0 ? logToLinear(whaleThresholdUsd) : 0;
+
+  const chains = useMemo(
+    () => Object.values(CHAINS).filter((c) => enabledChains.has(c.id)),
+    [enabledChains],
+  );
 
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        // Ignore clicks on the info button itself
         if ((e.target as HTMLElement).closest('.info-btn')) return;
         onClose();
       }
@@ -547,88 +532,147 @@ function InfoPanel({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div ref={panelRef} className="info-panel">
-      <div className="info-panel-header">
-        <span>Legend</span>
-        <button className="detail-close" onClick={onClose}>x</button>
+    <div ref={panelRef} className="ip">
+      {/* Tab bar */}
+      <div className="ip-tabs">
+        <button className={`ip-tab ${tab === 'guide' ? 'on' : ''}`} onClick={() => setTab('guide')}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          Guide
+        </button>
+        <button className={`ip-tab ${tab === 'gas' ? 'on' : ''}`} onClick={() => setTab('gas')}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Gas
+        </button>
+        <button className={`ip-tab ${tab === 'settings' ? 'on' : ''}`} onClick={() => setTab('settings')}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </button>
+        <button className="ip-close" onClick={onClose}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
 
-      <div className="info-section">
-        <div className="info-row">
-          <span className="info-icon info-dot" />
-          <span>Each particle is a transaction — size = value</span>
-        </div>
+      {/* ── Guide tab ── */}
+      {tab === 'guide' && (
+        <div className="ip-body">
+          <div className="ip-guide-grid">
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon"><span className="ip-dot-anim" /></span>
+              <span>Particles are transactions — bigger = higher value</span>
+            </div>
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon"><span className="ip-whale-anim" /></span>
+              <span>Bright glow = whale transactions</span>
+            </div>
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon"><span className="ip-ring-anim" /></span>
+              <span>Rings pulse when new blocks arrive</span>
+            </div>
+            <div className="ip-guide-card">
+              <span className="ip-guide-icon">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 15l-2 5L9 9l11 4-5 2z"/></svg>
+              </span>
+              <span>Click any particle to inspect</span>
+            </div>
+          </div>
 
-        <div className="info-row info-sub">
-          {CHAIN_LEGEND.map((c) => (
-            <span key={c.name} className="info-chip">
-              <span className="info-dot info-dot--pulse" style={{ background: c.color }} />
-              {c.name}
-            </span>
-          ))}
-        </div>
+          <div className="ip-sep" />
 
-        <div className="info-row">
-          <span className="info-icon info-token-swatch" />
-          <span>Token transfers colored by token</span>
-        </div>
+          <div className="ip-legend-label">Chains</div>
+          <div className="ip-chips">
+            {CHAIN_LEGEND.map((c) => (
+              <span key={c.name} className="ip-chip" style={{ '--chip-color': c.color } as React.CSSProperties}>
+                <span className="ip-chip-dot" />
+                {c.name}
+              </span>
+            ))}
+          </div>
 
-        <div className="info-row info-sub">
-          {TOKEN_LEGEND.map((t) => (
-            <span key={t.symbol} className="info-chip">
-              <span className="info-dot" style={{ background: t.color }} />
-              {t.symbol}
-            </span>
-          ))}
+          <div className="ip-legend-label" style={{ marginTop: 10 }}>Tokens</div>
+          <div className="ip-chips">
+            {TOKEN_LEGEND.map((t) => (
+              <span key={t.symbol} className="ip-chip" style={{ '--chip-color': t.color } as React.CSSProperties}>
+                <span className="ip-chip-dot" />
+                {t.symbol}
+              </span>
+            ))}
+          </div>
         </div>
+      )}
 
-        <div className="info-row">
-          <span className="info-icon info-whale-glow" />
-          <span>Large glowing particles = high-value whale txns</span>
+      {/* ── Gas tab ── */}
+      {tab === 'gas' && (
+        <div className="ip-body">
+          {chains.some((c) => avgGasPerChain[c.id] !== undefined) ? (
+            <div className="ip-gas-list">
+              {chains.map((c) => {
+                const gasPrice = avgGasPerChain[c.id];
+                if (gasPrice === undefined) return null;
+                return (
+                  <div key={c.id} className="ip-gas-card">
+                    <div className="ip-gas-chain-row">
+                      <span className="ip-gas-chain-dot" style={{ background: c.color.primary }} />
+                      <span className="ip-gas-chain-name">{c.name}</span>
+                      <span className="ip-gas-gwei">{formatGwei(gasPrice)} gwei</span>
+                    </div>
+                    <div className="ip-gas-costs">
+                      {GAS_TYPES.map((est) => {
+                        const costEth = (gasPrice * est.gas) / 1e9;
+                        const nativePrice = tokenPrices[c.nativeCurrency];
+                        const usdCost = nativePrice ? costEth * nativePrice : null;
+                        const display = usdCost !== null
+                          ? (usdCost < 0.01 ? '<$0.01' : `$${formatHumanValue(usdCost)}`)
+                          : `${formatHumanValue(costEth)} ${c.nativeCurrency}`;
+                        return (
+                          <div key={est.label} className="ip-gas-cost-row">
+                            <span className="ip-gas-type">{est.label}</span>
+                            <span className="ip-gas-val">{display}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="ip-empty">Waiting for gas data...</div>
+          )}
         </div>
+      )}
 
-        <div className="info-row">
-          <span className="info-icon info-ring info-ring--expand" />
-          <span>Expanding rings = new blocks arriving</span>
+      {/* ── Settings tab ── */}
+      {tab === 'settings' && (
+        <div className="ip-body">
+          <div className="ip-setting">
+            <div className="ip-setting-header">
+              <span className="ip-setting-label">Whale Threshold</span>
+              <span className="ip-setting-value">
+                {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
+              </span>
+            </div>
+            <div className="ip-setting-note">Minimum USD value for whale alerts on stablecoins</div>
+            <input
+              type="range"
+              className="ip-slider"
+              min={0}
+              max={1}
+              step={0.001}
+              value={sliderValue}
+              onChange={(e) => {
+                const t = parseFloat(e.target.value);
+                setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
+              }}
+            />
+            <div className="ip-slider-labels">
+              <span>Auto</span>
+              <span>$10K</span>
+              <span>$100K</span>
+              <span>$1M</span>
+            </div>
+          </div>
         </div>
-
-        <div className="info-row">
-          <span className="info-icon">👆</span>
-          <span>Click any particle to inspect tx details</span>
-        </div>
-      </div>
-
-      <div className="info-divider" />
-
-      <div className="info-section">
-        <div className="info-slider-header">
-          <span>Whale Threshold</span>
-          <span className="info-slider-value">
-            {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
-          </span>
-        </div>
-        <div className="info-slider-note">Applies to stablecoins (USDC, USDT, DAI)</div>
-        <input
-          type="range"
-          className="info-slider"
-          min={0}
-          max={1}
-          step={0.001}
-          value={sliderValue}
-          onChange={(e) => {
-            const t = parseFloat(e.target.value);
-            setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
-          }}
-        />
-        <div className="info-slider-labels">
-          <span>Auto</span>
-          <span>$10K</span>
-          <span>$100K</span>
-          <span>$1M</span>
-        </div>
-      </div>
-
-      <GasEstimator />
+      )}
     </div>
   );
 }
@@ -668,7 +712,7 @@ function WalletButton() {
       <button className="wallet-btn wallet-btn--connected" onClick={handleClick}>
         <span className="wallet-dot" />
         <span className="wallet-addr">{truncateAddress(address)}</span>
-        {balance && <span className="wallet-balance">{parseFloat(balance).toFixed(4)} ETH</span>}
+        {balance && <span className="wallet-balance">{formatHumanValue(parseFloat(balance))} ETH</span>}
       </button>
     );
   }
@@ -695,7 +739,7 @@ function WhaleHistoryItem({ record }: { record: WhaleRecord }) {
     >
       <span className="whale-history-dot" style={{ background: chain?.color.primary }} />
       <span className="whale-history-value">
-        {record.value.toFixed(2)} {record.tokenSymbol ?? chain?.nativeCurrency}
+        {formatHumanValue(record.value)} {record.tokenSymbol ?? chain?.nativeCurrency}
       </span>
       <span className="whale-history-addr">{truncateAddress(record.from)}</span>
       <span className="whale-history-time">{formatRelativeTime(record.timestamp)}</span>
@@ -810,10 +854,11 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
                   '--chain-color': chain?.color.primary ?? '#fff',
                 } as React.CSSProperties}
               >
+                <span className="whale-alert-icon">🐋</span>
                 <span className="whale-alert-chain-dot" style={{ background: chain?.color.primary }} />
                 <span className="whale-alert-chain-name">{chain?.abbr}</span>
                 <span className="whale-value">
-                  {whale.value.toFixed(2)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
+                  {formatHumanValue(whale.value)} {whale.tokenInfo?.symbol ?? chain?.nativeCurrency}
                 </span>
                 <span className="whale-alert-from">{truncateAddress(whale.from)}</span>
                 <span className="whale-alert-time">{formatRelativeTime(whale.timestamp)}</span>
@@ -838,10 +883,10 @@ function WhaleAlertsPanel({ recentWhales }: { recentWhales: import('../data/type
 
 function formatPortfolioUsd(value: number): string {
   if (value < 0.01) return '<$0.01';
-  if (value < 1_000) return `$${value.toFixed(2)}`;
-  if (value < 10_000) return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (value < 1_000_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(2)}`;
 }
 
 function PortfolioPanel() {
@@ -974,7 +1019,7 @@ function PortfolioPanel() {
                       >
                         <span className="portfolio-alloc-dot" style={{ background: chain?.color.primary }} />
                         <span className="portfolio-alloc-name">{chain?.name ?? chainId}</span>
-                        <span className="portfolio-alloc-pct">{pct.toFixed(0)}%</span>
+                        <span className="portfolio-alloc-pct">{Math.round(pct)}%</span>
                       </div>
                     );
                   })}
@@ -987,7 +1032,7 @@ function PortfolioPanel() {
                   <div className="portfolio-flow-item">
                     <span className="portfolio-flow-arrow portfolio-flow-in">&uarr;</span>
                     <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{netFlow.received.toFixed(4)}</span>
+                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.received)}</span>
                       <span className="portfolio-flow-label">Received</span>
                     </div>
                   </div>
@@ -995,7 +1040,7 @@ function PortfolioPanel() {
                   <div className="portfolio-flow-item">
                     <span className="portfolio-flow-arrow portfolio-flow-out">&darr;</span>
                     <div className="portfolio-flow-data">
-                      <span className="portfolio-flow-value">{netFlow.sent.toFixed(4)}</span>
+                      <span className="portfolio-flow-value">{formatHumanValue(netFlow.sent)}</span>
                       <span className="portfolio-flow-label">Sent</span>
                     </div>
                   </div>
@@ -1032,13 +1077,7 @@ function PortfolioPanel() {
                         </div>
                         <div className="portfolio-item-bottom">
                           <span className="portfolio-balance">
-                            {item.balance < 0.01
-                              ? '<0.01'
-                              : item.balance < 1
-                                ? item.balance.toFixed(4)
-                                : item.balance < 10_000
-                                  ? item.balance.toFixed(2)
-                                  : item.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            {formatHumanValue(item.balance)}
                           </span>
                           {pct > 0 && (
                             <div className="portfolio-pct-track">
@@ -1049,7 +1088,7 @@ function PortfolioPanel() {
                             </div>
                           )}
                           {pct > 0 && (
-                            <span className="portfolio-pct-text">{pct.toFixed(0)}%</span>
+                            <span className="portfolio-pct-text">{Math.round(pct)}%</span>
                           )}
                         </div>
                       </div>
@@ -1232,18 +1271,259 @@ function OnboardingCard() {
   );
 }
 
+// ── Token Filter ────────────────────────────────
+
+const TOKEN_GROUPS: { label: string; symbols: string[] }[] = [
+  { label: 'Native', symbols: ['ETH', 'MATIC', 'AVAX', 'BNB'] },
+  { label: 'Stablecoins', symbols: ['USDT', 'USDC', 'DAI'] },
+  { label: 'Wrapped', symbols: ['WETH', 'WBTC', 'WBNB', 'WAVAX', 'cbETH', 'stETH', 'WETH.e', 'WBTC.e'] },
+  { label: 'DeFi', symbols: ['UNI', 'LINK', 'AAVE', 'LDO', 'ARB', 'OP', 'POL', 'AERO', 'JOE', 'CAKE'] },
+];
+
+const TOKEN_COLORS: Record<string, string> = {
+  ETH: '#627EEA', MATIC: '#8247E5', AVAX: '#E84142', BNB: '#F0B90B',
+  USDT: '#26A17B', USDC: '#2775CA', DAI: '#F5AC37',
+  WETH: '#EC1C79', WBTC: '#F7931A', UNI: '#FF007A',
+  AAVE: '#B6509E', LINK: '#2A5ADA', LDO: '#00A3FF',
+  stETH: '#00A3FF', ARB: '#28A0F0', OP: '#FF0420',
+  POL: '#8247E5', cbETH: '#0052FF', AERO: '#0052FF',
+  WAVAX: '#E84142', JOE: '#E84142', WBNB: '#F0B90B',
+  CAKE: '#D1884F',
+  'WETH.e': '#EC1C79', 'WBTC.e': '#F7931A',
+};
+
+function TokenFilter() {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [cacheReady, setCacheReady] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const enabledChains = useStore((s) => s.enabledChains);
+  const enabledTokens = useStore((s) => s.enabledTokens);
+  const customTokens = useStore((s) => s.customTokens);
+  const toggleToken = useStore((s) => s.toggleToken);
+  const setAllTokens = useStore((s) => s.setAllTokens);
+  const addCustomToken = useStore((s) => s.addCustomToken);
+
+  // Signal when CoinGecko cache is ready so search useMemo re-triggers
+  useEffect(() => {
+    initTokenLists().then(() => setCacheReady(true)).catch(() => setCacheReady(true));
+  }, []);
+
+  // Build visible popular symbols from enabled chains
+  const popularSymbols = useMemo(() => {
+    const symbols = new Set<string>();
+    for (const chainId of enabledChains) {
+      const chainSymbols = POPULAR_SYMBOLS[chainId];
+      if (chainSymbols) {
+        for (const s of chainSymbols) symbols.add(s);
+      }
+    }
+    return symbols;
+  }, [enabledChains]);
+
+  // Total and enabled counts for badge
+  const totalPopular = popularSymbols.size + customTokens.size;
+  const enabledCount = [...popularSymbols, ...customTokens].filter(s => enabledTokens.has(s)).length;
+  const allEnabled = enabledCount === totalPopular;
+
+  // Close on outside click or Escape
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', handleClick);
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('mousedown', handleClick);
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
+  // Search: try CoinGecko cache first, fall back to hardcoded token registry
+  const searchResults = useMemo(() => {
+    if (search.length < 2) return [];
+    const known = new Set([...popularSymbols, ...customTokens]);
+
+    // Try CoinGecko cache
+    let results = searchTokens(search, [...enabledChains]);
+
+    // If cache empty, search hardcoded registry as fallback
+    if (results.length === 0) {
+      const q = search.toLowerCase();
+      const fallback: CachedToken[] = [];
+      for (const chainId of enabledChains) {
+        for (const entry of getChainTokens(chainId)) {
+          if (entry.symbol.toLowerCase().includes(q)) {
+            fallback.push({
+              address: entry.address,
+              symbol: entry.symbol,
+              name: entry.symbol,
+              decimals: entry.decimals,
+              chainId,
+            });
+          }
+        }
+      }
+      results = fallback;
+    }
+
+    return results.filter((t) => !known.has(t.symbol)).slice(0, 10);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, enabledChains, popularSymbols, customTokens, cacheReady]);
+
+  return (
+    <div className="token-filter-wrapper" ref={dropdownRef}>
+      <button
+        className={`token-filter-btn ${open ? 'active' : ''}`}
+        onClick={() => setOpen(!open)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+        Tokens
+        {!allEnabled && <span className="token-filter-badge">{enabledCount}</span>}
+      </button>
+      {open && (
+        <div className="token-filter-dropdown">
+          <div className="token-filter-header">
+            <span className="token-filter-title">Filter Tokens</span>
+            <div className="token-filter-actions">
+              <button className={allEnabled ? 'active' : ''} onClick={() => setAllTokens(true)}>All</button>
+              <button className={enabledCount === 0 ? 'active' : ''} onClick={() => setAllTokens(false)}>None</button>
+            </div>
+          </div>
+          <div className="token-filter-search-wrap">
+            <svg className="token-search-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              className="token-filter-search"
+              type="text"
+              placeholder="Search tokens..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="token-filter-list">
+            {TOKEN_GROUPS.map((group) => {
+              const q = search.toLowerCase();
+              const visible = group.symbols.filter(s =>
+                popularSymbols.has(s) && (!q || s.toLowerCase().includes(q))
+              );
+              if (visible.length === 0) return null;
+              return (
+                <div key={group.label} className="token-group-section">
+                  <div className="token-filter-group">{group.label}</div>
+                  {visible.map((symbol) => {
+                    const isOn = enabledTokens.has(symbol);
+                    return (
+                      <label key={symbol} className={`token-filter-item ${isOn ? 'on' : ''}`}>
+                        <span
+                          className="token-dot"
+                          style={{ background: TOKEN_COLORS[symbol] ?? '#888' }}
+                        />
+                        <span className="token-label">{symbol}</span>
+                        <span
+                          className={`token-toggle ${isOn ? 'on' : ''}`}
+                          onClick={(e) => { e.preventDefault(); toggleToken(symbol); }}
+                        >
+                          <span className="token-toggle-knob" />
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {customTokens.size > 0 && (() => {
+              const q = search.toLowerCase();
+              const filtered = [...customTokens].filter(s => !q || s.toLowerCase().includes(q));
+              if (filtered.length === 0) return null;
+              return (
+                <div className="token-group-section">
+                  <div className="token-filter-group">Custom</div>
+                  {filtered.map((symbol) => {
+                    const isOn = enabledTokens.has(symbol);
+                    return (
+                      <label key={symbol} className={`token-filter-item ${isOn ? 'on' : ''}`}>
+                        <span className="token-dot" style={{ background: '#888' }} />
+                        <span className="token-label">{symbol}</span>
+                        <span
+                          className={`token-toggle ${isOn ? 'on' : ''}`}
+                          onClick={(e) => { e.preventDefault(); toggleToken(symbol); }}
+                        >
+                          <span className="token-toggle-knob" />
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            {searchResults.length > 0 && (
+              <div className="token-group-section">
+                <div className="token-filter-group">Search Results</div>
+                {searchResults.map((t) => (
+                  <button
+                    key={`${t.chainId}:${t.address}`}
+                    className="token-filter-result"
+                    onClick={() => {
+                      addCustomToken(t.symbol);
+                      setSearch('');
+                    }}
+                  >
+                    <span className="token-dot" style={{ background: '#888' }} />
+                    <span className="token-result-info">
+                      <span className="token-label">{t.symbol}</span>
+                      <span className="token-result-name">{t.name}</span>
+                    </span>
+                    <span className="token-result-chain">{CHAINS[t.chainId]?.abbr ?? t.chainId}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Overlay ───────────────────────────────
 
 export function Overlay() {
-  const focusedChain = useStore((s) => s.focusedChain);
   const setFocusedChain = useStore((s) => s.setFocusedChain);
   const recentWhales = useStore((s) => s.recentWhales);
   const inspectedTx = useStore((s) => s.inspectedTx);
   const transitioning = useStore((s) => s.transitioning);
+  const enabledChains = useStore((s) => s.enabledChains);
+  const enabledTokens = useStore((s) => s.enabledTokens);
+  const toggleChain = useStore((s) => s.toggleChain);
+  const setAllChains = useStore((s) => s.setAllChains);
   const [infoOpen, setInfoOpen] = useState(false);
 
-  // Fetch token prices on mount and refresh every 60s
+  // Filter whales to only enabled chains & tokens
+  const filteredWhales = useMemo(() =>
+    recentWhales.filter((w) => {
+      if (!enabledChains.has(w.chainId)) return false;
+      const symbol = w.tokenInfo?.symbol ?? CHAINS[w.chainId]?.nativeCurrency;
+      if (symbol && !enabledTokens.has(symbol)) return false;
+      return true;
+    }),
+    [recentWhales, enabledChains, enabledTokens],
+  );
+
+  // Fetch token prices on mount and refresh every 60s; also init token lists
   useEffect(() => {
+    initTokenLists().catch(() => {});
     const load = () => {
       fetchPrices().then((prices) => {
         useStore.getState().setTokenPrices(prices);
@@ -1282,45 +1562,48 @@ export function Overlay() {
 
       {/* Header */}
       <div className="overlay-header">
-        <div className="logo">
-          <span className="logo-icon">◉</span>
-          <span className="logo-text">ChainPulse</span>
+        <div className="header-left">
+          <div className="logo">
+            <span className="logo-icon">◉</span>
+            <span className="logo-text">ChainPulse</span>
+          </div>
+          <StatsStrip />
         </div>
 
         <div className="header-right">
         <div className="chain-selector">
           <button
-            className={`chain-btn ${focusedChain === null ? 'active' : ''}`}
+            className={`chain-btn ${enabledChains.size === Object.keys(CHAINS).length ? 'active' : ''}`}
             style={{
               '--chain-color': '#888',
               '--chain-color-dim': '#88888840',
             } as React.CSSProperties}
-            onClick={() => setFocusedChain(null)}
+            onClick={() => {
+              setAllChains(true);
+              setFocusedChain(null);
+            }}
           >
             All
           </button>
           {Object.values(CHAINS).map((chain) => (
             <button
               key={chain.id}
-              className={`chain-btn ${focusedChain === chain.id ? 'active' : ''}`}
+              className={`chain-btn ${enabledChains.has(chain.id) ? 'active' : 'disabled'}`}
               style={{
                 '--chain-color': chain.color.primary,
                 '--chain-color-dim': chain.color.primary + '40',
               } as React.CSSProperties}
-              onClick={() =>
-                setFocusedChain(focusedChain === chain.id ? null : chain.id)
-              }
+              onClick={() => toggleChain(chain.id)}
             >
-              {chain.name}
+              {chain.abbr}
             </button>
           ))}
         </div>
+        <TokenFilter />
         <WalletButton />
         </div>
       </div>
 
-      {/* Stats strip */}
-      <StatsStrip />
 
       {/* Footer */}
       <div className="overlay-footer">
@@ -1334,13 +1617,16 @@ export function Overlay() {
           {infoOpen && <InfoPanel onClose={handleCloseInfo} />}
         </div>
 
-        <WhaleAlertsPanel recentWhales={recentWhales} />
+        <WhaleAlertsPanel recentWhales={filteredWhales} />
       </div>
 
       {/* Tx detail panel */}
       {inspectedTx && (
         <TxDetail tx={inspectedTx} onClose={handleCloseDetail} />
       )}
+
+      {/* Hover tooltip */}
+      <HoverTooltip />
     </div>
   );
 }

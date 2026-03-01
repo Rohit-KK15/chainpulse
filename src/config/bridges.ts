@@ -33,6 +33,27 @@ export const BRIDGE_CONTRACTS: BridgeContract[] = [
     fromChain: 'ethereum',
     toChain: 'arbitrum',
   },
+  // Base Bridge (Ethereum → Base)
+  {
+    address: '0x3154cf16ccdb4c6d922629664174b904d80f2c35',
+    name: 'Base Bridge',
+    fromChain: 'ethereum',
+    toChain: 'base',
+  },
+  // Optimism Gateway (Ethereum → Optimism)
+  {
+    address: '0x99c9fc46f92e8a1c0dec1b1747d010903e884be1',
+    name: 'Optimism Gateway',
+    fromChain: 'ethereum',
+    toChain: 'optimism',
+  },
+  // Avalanche Bridge (Ethereum → Avalanche)
+  {
+    address: '0x8eb8a3b98659cce290402893d0123abb75e3ab28',
+    name: 'Avalanche Bridge',
+    fromChain: 'ethereum',
+    toChain: 'avalanche',
+  },
 ];
 
 export function detectBridge(toAddress: string | null): BridgeContract | null {

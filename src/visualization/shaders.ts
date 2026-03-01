@@ -157,48 +157,21 @@ export const blockPulseFragmentShader = /* glsl */ `
     vec2 uv = vUv - 0.5;
     float dist = length(uv) * 2.0;
 
-    // ── Soft radial fade — content vanishes before geometry edge ──
-    float edgeFade = 1.0 - smoothstep(0.75, 0.97, dist);
-    if (edgeFade < 0.001) discard;
+    // ── Ring: soft fade on both edges, no hard boundary ──
+    float ringPos = uProgress;
+    float outerFade = 1.0 - smoothstep(ringPos - 0.05, ringPos + 0.2, dist);   // Dissolves outward
+    float innerFade = smoothstep(ringPos - 0.7, ringPos - 0.05, dist);          // Fades in from inside
+    float ring = outerFade * innerFade;
 
-    // ── Ring sharpness loosens as the wave spreads (sharp → diffuse) ──
-    float spread = 1.0 + uProgress * 2.0;
-    float sharpness = 22.0 / spread;
-
-    // ── Primary ring: gaussian that softens as it expands ──
-    float ringDelta = dist - uProgress;
-    float primaryRing = exp(-ringDelta * ringDelta * sharpness);
-
-    // ── Secondary trailing ring: delayed, also softens ──
-    float trailPos = max(uProgress - 0.15, 0.0);
-    float trailDelta = dist - trailPos;
-    float trailRing = exp(-trailDelta * trailDelta * sharpness * 1.4) * 0.3;
-
-    // ── Inner glow: diffuse fill that dissipates as wave expands ──
-    float innerFill = exp(-dist * dist * 3.0) * (1.0 - uProgress) * (1.0 - uProgress);
-
-    // ── Angular variation — subtle organic break of perfect symmetry ──
+    // ── Subtle angular wobble ──
     float angle = atan(uv.y, uv.x);
-    float wobble = 1.0 + 0.04 * sin(angle * 6.0 + uTime * 2.0)
-                       + 0.025 * sin(angle * 10.0 - uTime * 1.4);
+    float wobble = 1.0 + 0.02 * sin(angle * 6.0 + uTime * 2.0);
+    ring *= wobble;
 
-    // ── Combine layers ──
-    float ring = primaryRing * wobble * 0.4
-               + trailRing * 0.3
-               + innerFill * 0.06;
-
-    // ── Chromatic depth ──
-    float chromaShift = primaryRing * 0.08;
-    vec3 col = vec3(
-      uColor.r + chromaShift * 0.5,
-      uColor.g + chromaShift * 0.3,
-      uColor.b + chromaShift
-    );
-
-    float alpha = ring * uOpacity * edgeFade;
+    float alpha = ring * uOpacity * 0.12;
     if (alpha < 0.001) discard;
 
-    gl_FragColor = vec4(col, alpha);
+    gl_FragColor = vec4(uColor, alpha);
   }
 `;
 

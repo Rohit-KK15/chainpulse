@@ -54,5 +54,6 @@ export function formatUsdValue(value: number, symbol: string): string | null {
   if (usd < 1) return `$${usd.toFixed(2)}`;
   if (usd < 1_000) return `$${usd.toFixed(2)}`;
   if (usd < 1_000_000) return `$${(usd / 1_000).toFixed(1)}K`;
-  return `$${(usd / 1_000_000).toFixed(2)}M`;
+  if (usd < 1_000_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`;
+  return `$${(usd / 1_000_000_000).toFixed(2)}B`;
 }

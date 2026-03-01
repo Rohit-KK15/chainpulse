@@ -4,6 +4,8 @@ const TOKEN_IDS: Record<string, string> = {
   ETH: 'ethereum',
   MATIC: 'matic-network',
   ARB: 'arbitrum',
+  AVAX: 'avalanche-2',
+  BNB: 'binancecoin',
   USDC: 'usd-coin',
   USDT: 'tether',
   DAI: 'dai',

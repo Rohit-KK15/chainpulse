@@ -2278,7 +2278,7 @@ button.mode-indicator:hover {
 
 /* ── Responsive: landscape mobile ─────────────── */
 
-@media (max-height: 480px) {
+@media (max-height: 500px) and (orientation: landscape) {
   .overlay {
     padding: var(--space-md) var(--space-xl);
   }
@@ -2290,6 +2290,15 @@ button.mode-indicator:hover {
   .whale-alerts {
     max-height: 60px;
     overflow: hidden;
+  }
+
+  .ip-body {
+    max-height: 30vh;
+  }
+
+  .mobile-drawer-body {
+    padding: var(--space-md);
+    gap: var(--space-md);
   }
 }
 

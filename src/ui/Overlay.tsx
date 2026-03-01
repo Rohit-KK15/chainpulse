@@ -149,12 +149,15 @@ function TxDetail({ tx, onClose }: { tx: InspectedTx; onClose: () => void }) {
   const toENS = useENSName(tx.to);
 
   // Position the panel near the click, clamped to viewport using visualViewport
+  const isMobile = useIsMobile();
   const vw = window.visualViewport?.width ?? document.documentElement.clientWidth;
   const vh = window.visualViewport?.height ?? document.documentElement.clientHeight;
-  const style: React.CSSProperties = {
-    left: Math.max(0, Math.min(tx.screenX + 12, vw - 320)),
-    top: Math.max(0, Math.min(tx.screenY - 20, vh - 400)),
-  };
+  const style: React.CSSProperties = isMobile
+    ? {}
+    : {
+        left: Math.max(0, Math.min(tx.screenX + 12, vw - 320)),
+        top: Math.max(0, Math.min(tx.screenY - 20, vh - 400)),
+      };
 
   // Close on outside click
   useEffect(() => {

@@ -449,7 +449,7 @@ function ModeIndicator() {
 function WhaleThresholdSlider() {
   const whaleThresholdUsd = useStore((s) => s.whaleThresholdUsd);
   const setWhaleThresholdUsd = useStore((s) => s.setWhaleThresholdUsd);
-  const sliderValue = whaleThresholdUsd > 0 ? logToLinear(whaleThresholdUsd) : 0;
+  const sliderValue = logToLinear(Math.max(whaleThresholdUsd, SLIDER_MIN));
 
   return (
     <div className="whale-slider-compact">
@@ -461,14 +461,14 @@ function WhaleThresholdSlider() {
         max={1}
         step={0.001}
         value={sliderValue}
-        title={whaleThresholdUsd > 0 ? `Whale threshold: ${formatUsd(whaleThresholdUsd)}` : 'Whale threshold: Auto'}
+        title={`Whale threshold: ${formatUsd(whaleThresholdUsd)}`}
         onChange={(e) => {
           const t = parseFloat(e.target.value);
-          setWhaleThresholdUsd(t <= 0.001 ? 0 : linearToLog(t));
+          setWhaleThresholdUsd(linearToLog(t));
         }}
       />
       <span className="whale-slider-value">
-        {whaleThresholdUsd > 0 ? formatUsd(whaleThresholdUsd) : 'Auto'}
+        {formatUsd(whaleThresholdUsd)}
       </span>
     </div>
   );
@@ -492,8 +492,8 @@ const TOKEN_LEGEND = [
   { symbol: 'LINK', color: '#2A5ADA' },
 ];
 
-const SLIDER_MIN = 1_000;
-const SLIDER_MAX = 1_000_000;
+const SLIDER_MIN = 10_000;
+const SLIDER_MAX = 50_000_000;
 
 function logToLinear(value: number): number {
   const minLog = Math.log10(SLIDER_MIN);

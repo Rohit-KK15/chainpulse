@@ -137,7 +137,7 @@ function loadPrefs(): Prefs {
       return {
         isSimulation: parsed.isSimulation ?? false,
         whaleHistory: Array.isArray(parsed.whaleHistory) ? parsed.whaleHistory.slice(0, MAX_WHALE_HISTORY) : [],
-        whaleThresholdUsd: typeof parsed.whaleThresholdUsd === 'number' ? parsed.whaleThresholdUsd : 1_000_000,
+        whaleThresholdUsd: typeof parsed.whaleThresholdUsd === 'number' && parsed.whaleThresholdUsd > 0 ? parsed.whaleThresholdUsd : 1_000_000,
         enabledChains,
         enabledTokens,
         customTokens,

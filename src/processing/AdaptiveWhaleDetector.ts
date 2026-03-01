@@ -93,7 +93,8 @@ class AdaptiveWhaleDetectorImpl {
       }
     }
 
-    return threshold;
+    // No price data available — suppress whale detection until prices load
+    return Infinity;
   }
 
   isWhale(chainId: string, valueInToken: number): boolean {

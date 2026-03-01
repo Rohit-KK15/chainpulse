@@ -2,11 +2,11 @@
 
 <h1>◉ ChainPulse</h1>
 
-Real-time 3D visualization of blockchain activity across multiple chains.
-
-Watch transactions flow as particles, spot whale transfers, and see cross-chain bridge activity — all rendered in an interactive 3D scene.
-
 </div>
+
+Real-time 3D visualization of blockchain activity across multiple chains. Watch transactions flow as particles, spot whale transfers, and see cross-chain bridge activity — all rendered in an interactive 3D scene.
+
+<div><img width="3324" height="1758" alt="image" src="https://github.com/user-attachments/assets/d459703a-5fd1-4e2a-9fd1-8d694ccfccb6" /></div>
 
 ## Features
 

@@ -966,16 +966,22 @@ function OnboardingCard() {
             <span className="info-dot" style={{ background: '#627EEA' }} /> Particles are live transactions — size reflects value
           </div>
           <div className="onboarding-item">
-            <span className="info-dot" style={{ background: '#8247E5' }} /> Colors represent chains: Ethereum, Polygon, Arbitrum
+            <span className="info-dot" style={{ background: '#8247E5' }} /> 7 chains: Ethereum, Polygon, Arbitrum, Base, Optimism, Avalanche, BSC
           </div>
           <div className="onboarding-item">
-            <span className="onboarding-glow" /> Large glowing particles are whale transactions
+            <span className="onboarding-glow" /> Large glowing particles are whale transfers ($1M+)
           </div>
           <div className="onboarding-item">
-            <span className="info-ring" /> Expanding rings signal new blocks arriving
+            <span className="onboarding-ring" /> Expanding rings signal new blocks arriving
           </div>
           <div className="onboarding-item">
             <span className="onboarding-click">+</span> Click any particle to inspect transaction details
+          </div>
+          <div className="onboarding-item">
+            <span className="onboarding-icon">🔗</span> Toggle chains and tokens with the filters in the header
+          </div>
+          <div className="onboarding-item">
+            <span className="onboarding-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg></span> Capture a screenshot with the camera icon in the toolbar
           </div>
         </div>
         <button className="onboarding-dismiss" onClick={handleDismiss}>Got it</button>

@@ -135,7 +135,7 @@ function loadPrefs(): Prefs {
         ? new Set<string>(parsed.enabledTokens)
         : defaultTokens;
       return {
-        isSimulation: parsed.isSimulation ?? true,
+        isSimulation: parsed.isSimulation ?? false,
         whaleHistory: Array.isArray(parsed.whaleHistory) ? parsed.whaleHistory.slice(0, MAX_WHALE_HISTORY) : [],
         whaleThresholdUsd: typeof parsed.whaleThresholdUsd === 'number' ? parsed.whaleThresholdUsd : 0,
         enabledChains,
@@ -145,7 +145,7 @@ function loadPrefs(): Prefs {
     }
   } catch { /* ignore */ }
   return {
-    isSimulation: true,
+    isSimulation: false,
     whaleHistory: [],
     whaleThresholdUsd: 0,
     enabledChains: new Set(allChainIds),
@@ -186,7 +186,10 @@ function persistFilters(get: () => AppState): void {
   });
 }
 
+const IS_DEV = import.meta.env.DEV || import.meta.env.VITE_DEV_MODE === 'true';
 const prefs = loadPrefs();
+// Production always uses live data; only dev mode allows simulation
+if (!IS_DEV) prefs.isSimulation = false;
 
 export const useStore = create<AppState>((set, get) => ({
   focusedChain: null,

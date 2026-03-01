@@ -20,6 +20,17 @@ function useIsTouchDevice(): boolean {
   );
 }
 
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia('(max-width: 768px)');
+      mq.addEventListener('change', cb);
+      return () => mq.removeEventListener('change', cb);
+    },
+    () => window.matchMedia('(max-width: 768px)').matches,
+  );
+}
+
 function usePrefersReducedMotion(): boolean {
   return useSyncExternalStore(
     (cb) => {
@@ -67,6 +78,7 @@ export function Scene() {
   const [contextLost, setContextLost] = useState(false);
   const reducedMotion = usePrefersReducedMotion();
   const isTouch = useIsTouchDevice();
+  const isMobile = useIsMobile();
   const controlsRef = useRef<any>(null);
 
   const handleCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
@@ -91,8 +103,8 @@ export function Scene() {
         </div>
       )}
       <Canvas
-        camera={{ position: [0, 0, 22], fov: 60, near: 0.1, far: 100 }}
-        dpr={[1, 2]}
+        camera={{ position: [0, 0, isMobile ? 26 : 22], fov: 60, near: 0.1, far: 100 }}
+        dpr={isMobile ? [1, 1.5] : [1, 2]}
         gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
         onCreated={handleCreated}
       >
@@ -107,7 +119,7 @@ export function Scene() {
 
           <EffectComposer>
             <Bloom
-              intensity={1.5}
+              intensity={isMobile ? 1.0 : 1.5}
               luminanceThreshold={0.12}
               luminanceSmoothing={0.9}
               mipmapBlur
@@ -120,8 +132,8 @@ export function Scene() {
           ref={controlsRef}
           enablePan={false}
           enableZoom={true}
-          autoRotate={!reducedMotion && !isTouch}
-          autoRotateSpeed={0.2}
+          autoRotate={!reducedMotion}
+          autoRotateSpeed={isTouch ? 0.1 : 0.2}
           minDistance={10}
           maxDistance={45}
         />

@@ -13,6 +13,7 @@ const BASE_RECONNECT_DELAY = 2000;
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 const MAX_TOKEN_TXS_PER_BLOCK = 40;
+const MAX_NATIVE_TXS_PER_BLOCK = 50;
 
 export class ConnectionManager {
   private provider: WebSocketProvider | null = null;
@@ -189,7 +190,24 @@ export class ConnectionManager {
           cappedTokenTxs = [...whales, ...rest.slice(0, Math.max(0, remaining))];
         }
 
-        const txs = [...txMap.values(), ...cappedTokenTxs];
+        // Cap native txs: sample if block has too many
+        let nativeTxs = [...txMap.values()];
+        if (nativeTxs.length > MAX_NATIVE_TXS_PER_BLOCK) {
+          // Keep high-value txs (top 20% by value), random sample the rest
+          nativeTxs.sort((a, b) => (a.value > b.value ? -1 : a.value < b.value ? 1 : 0));
+          const keepTop = Math.ceil(MAX_NATIVE_TXS_PER_BLOCK * 0.2);
+          const top = nativeTxs.slice(0, keepTop);
+          const rest = nativeTxs.slice(keepTop);
+          const sampleCount = MAX_NATIVE_TXS_PER_BLOCK - keepTop;
+          // Fisher-Yates partial shuffle
+          for (let i = rest.length - 1; i > 0 && rest.length - i <= sampleCount; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [rest[i], rest[j]] = [rest[j], rest[i]];
+          }
+          nativeTxs = [...top, ...rest.slice(0, Math.max(0, sampleCount))];
+        }
+
+        const txs = [...nativeTxs, ...cappedTokenTxs];
 
         if (txs.length > 0) {
           this.callback(txs);
@@ -237,7 +255,7 @@ export class ConnectionManager {
     } else {
       if (import.meta.env.DEV) {
         console.warn(
-          `[ChainPulse] ${this.chainId} max reconnect attempts reached, giving up`,
+          `[ChainPulse] ${this.chainId} max reconnect attempts reached, falling back`,
         );
       }
     }

@@ -40,6 +40,47 @@ export const CHAIN_PERSONALITIES: Record<string, ChainPersonality> = {
     motionSmoothness: 0.3,
     energyHalfLifeMult: 0.8,
   },
+
+  // Base: fast L2, smooth and clean
+  base: {
+    speedMultiplier: 1.3,
+    dampingMultiplier: 1.2,
+    glowIntensity: 0.95,
+    spawnSpread: 1.1,
+    motionSmoothness: 0.6,
+    energyHalfLifeMult: 0.9,
+  },
+
+  // Optimism: energetic, warm glow
+  optimism: {
+    speedMultiplier: 1.3,
+    dampingMultiplier: 1.1,
+    glowIntensity: 1.1,
+    spawnSpread: 1.1,
+    motionSmoothness: 0.5,
+    energyHalfLifeMult: 1.0,
+  },
+
+  // Avalanche: quick, sharp, high energy
+  avalanche: {
+    speedMultiplier: 1.4,
+    dampingMultiplier: 1.3,
+    glowIntensity: 1.0,
+    spawnSpread: 1.15,
+    motionSmoothness: 0.4,
+    energyHalfLifeMult: 0.85,
+  },
+
+
+  // BSC: steady throughput, moderate speed
+  bsc: {
+    speedMultiplier: 1.1,
+    dampingMultiplier: 1.0,
+    glowIntensity: 0.95,
+    spawnSpread: 1.0,
+    motionSmoothness: 0.5,
+    energyHalfLifeMult: 0.95,
+  },
 };
 
 const DEFAULT_PERSONALITY: ChainPersonality = {

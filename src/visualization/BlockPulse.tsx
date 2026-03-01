@@ -76,15 +76,14 @@ export function BlockPulse() {
       group.visible = true;
       group.position.set(p.cx, p.cy, p.cz);
 
-      // Scale: continuous expansion (no contraction)
+      // Scale: continuous expansion
       const easeProgress = 1 - Math.pow(1 - progress, 2);
       const radius = PULSE_MAX_RADIUS * 1.45 * easeProgress;
       group.scale.setScalar(radius);
 
-      // Opacity: fade completes at 80% of duration — invisible buffer before deactivation
-      const fadeProgress = Math.min(progress * 1.25, 1);
-      const t = 1 - fadeProgress;
-      const opacity = t * t * (3 - 2 * t) * 0.5;
+      // Opacity: smooth cubic ease-out over full duration — never instant
+      const t = 1 - progress;
+      const opacity = t * t * t * 0.5;
 
       mat.uniforms.uColor.value.set(p.r, p.g, p.b);
       mat.uniforms.uProgress.value = easeProgress * 0.7;
